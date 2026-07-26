@@ -1,0 +1,27 @@
+{
+  "tests": 3,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "PlayerState",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "Constructor",
+          "file": "\/home\/joao\/projects\/LANDS\/engine\/tests\/test_PlayerState.cpp",
+          "line": 6
+        },
+        {
+          "name": "DrawFromDeck",
+          "file": "\/home\/joao\/projects\/LANDS\/engine\/tests\/test_PlayerState.cpp",
+          "line": 12
+        },
+        {
+          "name": "PlayLand",
+          "file": "\/home\/joao\/projects\/LANDS\/engine\/tests\/test_PlayerState.cpp",
+          "line": 23
+        }
+      ]
+    }
+  ]
+}

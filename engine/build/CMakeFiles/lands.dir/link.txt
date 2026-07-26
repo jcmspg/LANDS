@@ -1,0 +1,2 @@
+/usr/bin/ar qc liblands.a CMakeFiles/lands.dir/src/WinEvaluator.cpp.o CMakeFiles/lands.dir/src/Card.cpp.o CMakeFiles/lands.dir/src/Deck.cpp.o CMakeFiles/lands.dir/src/PlayerState.cpp.o
+/usr/bin/ranlib liblands.a
