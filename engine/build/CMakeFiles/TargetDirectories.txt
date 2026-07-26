@@ -1,7 +1,0 @@
-/home/joao/projects/LANDS/engine/build/CMakeFiles/lands.dir
-/home/joao/projects/LANDS/engine/build/CMakeFiles/test_WinEvaluator.dir
-/home/joao/projects/LANDS/engine/build/CMakeFiles/test_Deck.dir
-/home/joao/projects/LANDS/engine/build/CMakeFiles/test_PlayerState.dir
-/home/joao/projects/LANDS/engine/build/CMakeFiles/test.dir
-/home/joao/projects/LANDS/engine/build/CMakeFiles/edit_cache.dir
-/home/joao/projects/LANDS/engine/build/CMakeFiles/rebuild_cache.dir

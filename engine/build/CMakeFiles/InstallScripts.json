@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/joao/projects/LANDS/engine/build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

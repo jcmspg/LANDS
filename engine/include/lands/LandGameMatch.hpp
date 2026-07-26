@@ -19,11 +19,25 @@ class LandGameMatch {
         size_t hand_size(int player_index) const;
         size_t land_count(int player_index, LandType land_type) const;
 
+
+        bool end_turn(int player_index);
+        int active_player() const;
+        int turn_number() const;
+        bool played_land_this_turn() const;
+
+
         private:
         Deck deck_;
         void deal_to(PlayerState& player, size_t num_cards);
         PlayerState players_[2];
         WinCondition winner_{WinCondition::NONE};
+
+        // turn related content
+        void begin_turn();
+
+        int active_player_{0};
+        int turn_number_{1};
+        bool played_land_{false}; // false until a land is played
 };
 
 } // namespace lands

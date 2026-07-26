@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#include "lands/AbilityId.hpp"
+#include "lands/PlayMode.hpp"
 
 namespace lands {
 
@@ -15,6 +17,12 @@ enum class LandType : uint8_t {
     NUM_LAND_TYPES = 5,
 };
 
+struct LandDefinition {
+    LandType type;
+    AbilityId deploy_ability;
+    AbilityId pitch_ability;
+    PitchTiming pitch_timing;
+};
 
 } // namespace lands
 

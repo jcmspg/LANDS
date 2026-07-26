@@ -1,5 +1,6 @@
 #include "lands/Deck.hpp"
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 namespace lands {
 
@@ -12,6 +13,14 @@ TEST(Deck, Draw) {
     Deck deck;
     deck.draw();
     EXPECT_EQ(deck.deck_size(), Deck::deck_size_ - 1);
+}
+
+TEST(Deck, DrawEmptyThrows) {
+    Deck deck;
+    while (deck.deck_size() > 0) {
+        deck.draw();
+    }
+    EXPECT_THROW(deck.draw(), std::runtime_error);
 }
 
 TEST(Deck, Shuffle) {

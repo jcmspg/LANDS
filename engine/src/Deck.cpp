@@ -29,6 +29,9 @@ void Deck::put_on_top(const Card& card) {
 }
 
 Card Deck::draw() {
+    if (cards_.empty()) {
+        throw std::runtime_error("Deck::draw: deck is empty");
+    }
     Card card = cards_.back();
     cards_.pop_back();
     return card;

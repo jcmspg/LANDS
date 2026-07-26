@@ -35,4 +35,10 @@ TEST(PlayerState, PlayLand) {
     EXPECT_EQ(player_state.land_counts(), (std::array<uint8_t, 5>{1, 0, 0, 0, 0}));
 }
 
+TEST(PlayerState, PlayLandBadIndexReturnsFalse) {
+    PlayerState player_state;
+    EXPECT_FALSE(player_state.play_land(0));
+    EXPECT_FALSE(player_state.play_land(99));
+}
+
 } // namespace lands

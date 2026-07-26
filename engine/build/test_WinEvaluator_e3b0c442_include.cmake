@@ -1,5 +1,0 @@
-if(EXISTS "/home/joao/projects/LANDS/engine/build/test_WinEvaluator_e3b0c442_tests.cmake")
-  include("/home/joao/projects/LANDS/engine/build/test_WinEvaluator_e3b0c442_tests.cmake")
-else()
-  add_test(test_WinEvaluator_NOT_BUILT test_WinEvaluator_NOT_BUILT)
-endif()
