@@ -14,6 +14,7 @@ add_library(lands STATIC
     src/Card.cpp
     src/Deck.cpp
     src/PlayerState.cpp
+    src/LandGameMatch.cpp
 )
 
 target_include_directories(lands PUBLIC
@@ -36,6 +37,10 @@ add_executable(test_PlayerState
     tests/test_PlayerState.cpp
 )
 
+add_executable(test_LandGameMatch
+    tests/test_LandGameMatch.cpp
+)
+
 target_link_libraries(test_WinEvaluator PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
@@ -48,7 +53,12 @@ target_link_libraries(test_PlayerState PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
 
+target_link_libraries(test_LandGameMatch PRIVATE
+    lands GTest::gtest GTest::gtest_main
+)
+
 include(GoogleTest)
 gtest_discover_tests(test_WinEvaluator)
 gtest_discover_tests(test_Deck)
 gtest_discover_tests(test_PlayerState)
+gtest_discover_tests(test_LandGameMatch)

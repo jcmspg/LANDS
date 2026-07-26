@@ -1,0 +1,123 @@
+# LANDS — ignore local build artifacts, secrets, IDE junk, and runtime data.
+# Source, CMakeLists.txt, GDD/README, and engine/tests are tracked.
+
+# ---------------------------------------------------------------------------
+# CMake / C++
+# ---------------------------------------------------------------------------
+build/
+cmake-build-*/
+out/
+compile_commands.json
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.d
+*.i
+*.s
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+Testing/
+*.ninja
+.ninja_deps
+.ninja_log
+
+# ---------------------------------------------------------------------------
+# Coverage / tests
+# ---------------------------------------------------------------------------
+*.gcda
+*.gcno
+*.gcov
+coverage/
+*.info
+*.profraw
+*.profdata
+
+# ---------------------------------------------------------------------------
+# Secrets / environment
+# Keep .env.example (and similar templates) tracked.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# ---------------------------------------------------------------------------
+# IDE / editors
+# ---------------------------------------------------------------------------
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+# Optional shared VS Code: track .vscode/extensions.json if you add one later.
+.vscode/*
+!.vscode/extensions.json
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------------------------------------------------------------------------
+# Godot 4
+# ---------------------------------------------------------------------------
+.godot/
+.mono/
+*.translation
+# Imported assets are regenerated; source assets stay tracked.
+**/*.import
+
+# ---------------------------------------------------------------------------
+# Python / tooling venvs
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.envrc
+
+# ---------------------------------------------------------------------------
+# Docker (local overrides may contain secrets)
+# ---------------------------------------------------------------------------
+docker-compose.override.yml
+compose.override.yml
+
+# ---------------------------------------------------------------------------
+# SQLite — local DB files (schema/migrations live in source, not here)
+# ---------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
