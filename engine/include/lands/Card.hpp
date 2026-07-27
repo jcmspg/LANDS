@@ -15,6 +15,8 @@ class Card {
         LandType get_land_type() const;
         uint32_t get_identifier() const;
 
+        bool operator==(const Card& other) const;
+    
     private:
         LandType land_type_;
         uint32_t identifier_;

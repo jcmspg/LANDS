@@ -112,4 +112,9 @@ WinCondition LandGameMatch::winner() const {
     return winner_;
 }
 
+size_t LandGameMatch::graveyard_size() const {
+    return graveyard_.size();
+}
+
+
 } // namespace lands

@@ -23,6 +23,8 @@ TEST(LandGameMatch, InitialState) {
     EXPECT_EQ(match.land_count(1, LandType::SWAMP), 0);
     EXPECT_EQ(match.land_count(0, LandType::FOREST), 0);
     EXPECT_EQ(match.land_count(1, LandType::FOREST), 0);
+
+    EXPECT_EQ(match.graveyard_size(), 0);
 }
 
 TEST(LandGameMatch, TurnManagement) {

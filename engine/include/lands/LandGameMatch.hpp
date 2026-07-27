@@ -3,6 +3,7 @@
 
 #include "lands/PlayerState.hpp"
 #include "lands/WinEvaluator.hpp"
+#include "lands/Graveyard.hpp"
 
 namespace lands {
 
@@ -25,6 +26,7 @@ class LandGameMatch {
         int turn_number() const;
         bool played_land_this_turn() const;
 
+        size_t graveyard_size() const;
 
         private:
         Deck deck_;
@@ -38,6 +40,7 @@ class LandGameMatch {
         int active_player_{0};
         int turn_number_{1};
         bool played_land_{false}; // false until a land is played
+        Graveyard graveyard_;
 };
 
 } // namespace lands

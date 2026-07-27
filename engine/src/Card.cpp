@@ -12,5 +12,10 @@ uint32_t Card::get_identifier() const {
     return identifier_;
 }
 
+bool Card::operator==(const Card& other) const {
+    return land_type_ == other.land_type_ && identifier_ == other.identifier_;
+}
+
+
 } // namespace lands
 
