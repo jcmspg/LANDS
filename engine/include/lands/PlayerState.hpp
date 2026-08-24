@@ -19,6 +19,9 @@ class PlayerState {
         const std::vector<Card>& hand() const;
         const std::array<uint8_t, 5>& land_counts() const;
         size_t hand_size() const;
+
+        Card take_from_hand(size_t hand_index);
+        void add_to_board(LandType land_type);
     
     private:
         std::vector<Card> hand_;

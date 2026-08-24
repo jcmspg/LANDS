@@ -1,4 +1,7 @@
 #include "lands/LandGameMatch.hpp"
+#include "lands/LandRules.hpp"
+#include "lands/WinEvaluator.hpp"
+
 
 #include <stdexcept>
 
@@ -64,12 +67,23 @@ bool LandGameMatch::play_land(int player_index, size_t hand_index) {
     if (!players_[player_index].play_land(hand_index)) {
         return false;
     }
-    WinEvaluator eval;
-    const auto result = eval.evaluate(players_[player_index].land_counts());
-    if (result != WinCondition::NONE) { // DOMAIN OR MONO -> NOT THE PLAYER INDEX
-        winner_ = result;
-    }
+    Card card = players_[player_index].take_from_hand(hand_index);
+
+    const LandDefinition& def = get(card.get_land_type());
+
+    StackItem item {
+        next_stack_id_++,
+        player_index,
+        PlayMode::DEPLOY,
+        card,
+        def.deploy_ability
+    };
+
+    stack_.push(std::move(item));
+    resolve_top_action();
+
     played_land_ = true;
+
     return true;
     
 }
@@ -116,5 +130,24 @@ size_t LandGameMatch::graveyard_size() const {
     return graveyard_.size();
 }
 
+size_t LandGameMatch::stack_size() const {
+    return stack_.size();
+}
+
+void LandGameMatch::resolve_top_action() {
+    StackItem item = stack_.pop();
+
+    if (item.mode == PlayMode::DEPLOY) {
+        players_[item.caster_id].add_to_board(item.card.get_land_type());
+
+        WinEvaluator eval;
+        const auto result = eval.evaluate(players_[item.caster_id].land_counts());
+        if (result != WinCondition::NONE) { // DOMAIN OR MONO -> NOT THE PLAYER INDEX
+            winner_ = result;
+        }
+    }
+
+    //pitch ability -> ignore for now
+}
 
 } // namespace lands

@@ -4,6 +4,7 @@
 #include "lands/PlayerState.hpp"
 #include "lands/WinEvaluator.hpp"
 #include "lands/Graveyard.hpp"
+#include "lands/ActionStack.hpp"
 
 namespace lands {
 
@@ -28,6 +29,8 @@ class LandGameMatch {
 
         size_t graveyard_size() const;
 
+        size_t stack_size() const;
+
         private:
         Deck deck_;
         void deal_to(PlayerState& player, size_t num_cards);
@@ -41,6 +44,10 @@ class LandGameMatch {
         int turn_number_{1};
         bool played_land_{false}; // false until a land is played
         Graveyard graveyard_;
+
+        ActionStack stack_;
+        uint32_t next_stack_id_{1};
+        void resolve_top_action();  // pop the top action and resolve it
 };
 
 } // namespace lands

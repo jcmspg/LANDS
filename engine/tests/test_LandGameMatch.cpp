@@ -85,4 +85,14 @@ TEST(LandGameMatch, ActionsRejectBadPlayerIndex) {
     EXPECT_FALSE(match.end_turn(2));
 }
 
+TEST(LandGameMatch, Stack) {
+    LandGameMatch match(12345);
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_TRUE(match.play_land(0, 0));
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_TRUE(match.end_turn(0));
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(match.winner(), WinCondition::NONE);
+}
+
 } // namespace lands

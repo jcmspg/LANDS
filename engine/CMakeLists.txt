@@ -17,6 +17,7 @@ add_library(lands STATIC
     src/LandGameMatch.cpp
     src/LandRules.cpp
     src/Graveyard.cpp
+    src/ActionStack.cpp
 )
 
 target_include_directories(lands PUBLIC
@@ -51,6 +52,10 @@ add_executable(test_Graveyard
     tests/test_Graveyard.cpp
 )
 
+add_executable(test_ActionStack
+    tests/test_ActionStack.cpp
+)
+
 target_link_libraries(test_WinEvaluator PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
@@ -75,6 +80,10 @@ target_link_libraries(test_Graveyard PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
 
+target_link_libraries(test_ActionStack PRIVATE
+    lands GTest::gtest GTest::gtest_main
+)
+
 include(GoogleTest)
 gtest_discover_tests(test_WinEvaluator)
 gtest_discover_tests(test_Deck)
@@ -82,3 +91,4 @@ gtest_discover_tests(test_PlayerState)
 gtest_discover_tests(test_LandGameMatch)
 gtest_discover_tests(test_LandRules)
 gtest_discover_tests(test_Graveyard)
+gtest_discover_tests(test_ActionStack)
