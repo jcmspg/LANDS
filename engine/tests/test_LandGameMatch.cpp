@@ -142,7 +142,9 @@ LandGameMatch make_destroy_scenario(bool p1_plains, bool p0_island,
         // P0 drew a card: it must not have changed the scenario
         if (find_in_hand(match, 0, LandType::ISLAND).has_value() != p0_island ||
             !find_in_hand(match, 0, LandType::MOUNTAIN).has_value() ||
-            match.hand_size(0) < 4) {
+            match.hand_size(0) < 4 ||
+            count_in_hand(match, 1, LandType::ISLAND) != 0 ||                // P1's turn-1 draw can change this
+            count_in_hand(match, 1, LandType::PLAINS) != (p1_plains ? 1 : 0)) {
             continue;
         }
         return match;
@@ -271,7 +273,8 @@ LandGameMatch make_flicker_scenario(LandType first_land, P1Action p1_action = P1
             settle(match);
         }
         if (match.choice_player() != -1 || !match.end_turn(1)) { continue; }
-        if (!find_in_hand(match, 0, LandType::PLAINS).has_value()) { continue; }
+        if (!find_in_hand(match, 0, LandType::PLAINS).has_value() ||
+            count_in_hand(match, 1, LandType::ISLAND) != (p1_island ? 1 : 0)) { continue; }   // P1's turn-1 draw
         return match;
     }
     ADD_FAILURE() << "no seed produced the Flicker scenario";
@@ -309,18 +312,35 @@ TEST(LandGameMatch, TurnManagement) {
     EXPECT_EQ(match2.hand_size(1), 6);
     EXPECT_EQ(match2.deck_size(), 39);
     EXPECT_FALSE(match2.end_turn(1));           // not P2's turn
-    EXPECT_TRUE(match2.end_turn(0));            // → P2, still turn 1, no draw
+    EXPECT_TRUE(match2.end_turn(0));            // -> P2, still turn 1; P2 draws normally (GDD 3.1)
     EXPECT_EQ(match2.active_player(), 1);
     EXPECT_EQ(match2.turn_number(), 1);
-    EXPECT_EQ(match2.hand_size(1), 6);
-    EXPECT_EQ(match2.deck_size(), 39);
-    EXPECT_TRUE(match2.end_turn(1));            // → P1, turn 2, P1 draws
+    EXPECT_EQ(match2.hand_size(1), 7);          // 6 + 1
+    EXPECT_EQ(match2.deck_size(), 38);
+    EXPECT_TRUE(match2.end_turn(1));            // -> P1, turn 2, P1 draws
     EXPECT_EQ(match2.active_player(), 0);
     EXPECT_EQ(match2.turn_number(), 2);
     EXPECT_EQ(match2.hand_size(0), 6);          // 5 + 1
-    EXPECT_EQ(match2.deck_size(), 38);
-    
+    EXPECT_EQ(match2.deck_size(), 37);
+}
 
+TEST(LandGameMatch, PlayerOneSkipsOnlyTheFirstDraw) {
+    LandGameMatch match(42);
+    EXPECT_EQ(match.hand_size(0), 5);           // no draw on P1's turn 1
+    EXPECT_EQ(match.deck_size(), 39);
+}
+
+TEST(LandGameMatch, EmptyLibrarySkipsTheDrawStep) {
+    LandGameMatch match(42);
+    while (match.deck_size() > 0) {
+        ASSERT_TRUE(match.end_turn(match.active_player()));
+    }
+    const int active = match.active_player();
+    const size_t hand_before = match.hand_size(1 - active);
+
+    EXPECT_TRUE(match.end_turn(active));                    // would have drawn: play continues instead
+    EXPECT_EQ(match.hand_size(1 - active), hand_before);
+    EXPECT_EQ(match.deck_size(), 0);
 }
 
 TEST(LandGameMatch, PlayLand) {
@@ -731,12 +751,13 @@ TEST(LandGameMatch, CounterSendsDeployedLandToTopOfLibrary) {
     EXPECT_EQ(match.graveyard_size(), 2);               // Island + cost card; the land is not there
     EXPECT_EQ(match.deck_size(), 40);                   // the land went back on top
 
-    // the deploy is still used up, and the countered land is the next card drawn
+    // the deploy is still used up, and the countered land is the next card drawn: P1's, the counterer's
     EXPECT_TRUE(match.played_land_this_turn());
     EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));
-    EXPECT_TRUE(match.end_turn(0));
-    EXPECT_TRUE(match.end_turn(1));                     // P0 draws: Memory Lapse
-    EXPECT_NE(std::find(match.hand(0).begin(), match.hand(0).end(), deployed), match.hand(0).end());
+    EXPECT_TRUE(match.end_turn(0));                     // P1 draws on its turn: Memory Lapse
+    EXPECT_TRUE(hand_holds(match, 1, deployed.get_identifier()));
+    EXPECT_FALSE(hand_holds(match, 0, deployed.get_identifier()));
+    EXPECT_EQ(match.deck_size(), 39);
 }
 
 TEST(LandGameMatch, CounterFizzlesPitchEffect) {
@@ -1184,10 +1205,9 @@ TEST(LandGameMatch, SurveilBinsAndKeepsTheChosenCards) {
     EXPECT_EQ(match.deck_size(), 38);                                   // one card binned
     EXPECT_EQ(match.graveyard_size(), 2);
 
-    EXPECT_TRUE(match.end_turn(0));
-    EXPECT_TRUE(match.end_turn(1));                                     // P0 draws the kept card
-    EXPECT_TRUE(hand_holds(match, 0, second));
-    EXPECT_FALSE(hand_holds(match, 0, top));
+    EXPECT_TRUE(match.end_turn(0));                                     // P1 draws the kept card
+    EXPECT_TRUE(hand_holds(match, 1, second));
+    EXPECT_FALSE(hand_holds(match, 1, top));
 }
 
 TEST(LandGameMatch, SurveilOrdersTheKeptCards) {
@@ -1200,18 +1220,16 @@ TEST(LandGameMatch, SurveilOrdersTheKeptCards) {
     EXPECT_TRUE(match.choose_surveil(0, {}, {first, second}));          // library_top_order[0] is the new top
     EXPECT_EQ(match.deck_size(), 39);
     EXPECT_EQ(match.graveyard_size(), 1);
-    ASSERT_TRUE(match.end_turn(0));
-    ASSERT_TRUE(match.end_turn(1));                                     // P0 draws first
-    EXPECT_TRUE(hand_holds(match, 0, first));
-    ASSERT_TRUE(match.end_turn(0));                                     // P1 draws second
-    EXPECT_TRUE(hand_holds(match, 1, second));
+    ASSERT_TRUE(match.end_turn(0));                                     // P1 draws first
+    EXPECT_TRUE(hand_holds(match, 1, first));
+    ASSERT_TRUE(match.end_turn(1));                                     // P0 draws second
+    EXPECT_TRUE(hand_holds(match, 0, second));
 
     EXPECT_TRUE(reversed.choose_surveil(0, {}, {second, first}));
     ASSERT_TRUE(reversed.end_turn(0));
+    EXPECT_TRUE(hand_holds(reversed, 1, second));
     ASSERT_TRUE(reversed.end_turn(1));
-    EXPECT_TRUE(hand_holds(reversed, 0, second));
-    ASSERT_TRUE(reversed.end_turn(0));
-    EXPECT_TRUE(hand_holds(reversed, 1, first));
+    EXPECT_TRUE(hand_holds(reversed, 0, first));
 }
 
 TEST(LandGameMatch, SurveilCanBinEverything) {

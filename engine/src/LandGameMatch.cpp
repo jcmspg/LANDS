@@ -460,7 +460,9 @@ void LandGameMatch::begin_turn() {
     if (active_player_ == 0) {
         ++turn_number_;
     }
-    if (turn_number_ >=2) {
+    // GDD §3.1: only P1's very first turn skips the draw, and that turn never goes
+    // through begin_turn(). P2 draws on its first turn; an empty library skips the draw.
+    if (deck_.deck_size() > 0) {
         players_[active_player_].draw_from(deck_);
     }
 }

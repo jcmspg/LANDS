@@ -7,7 +7,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Area | State | GDD |
 | :--- | :--- | :--- |
 | Shared 50-card deck, seeded shuffle, random opaque instance ids | done | §3.1, §6.3 |
-| Deal 5 / 6, P1 skips turn-1 draw | done | §3.1, §3.2 |
+| Deal 5 / 6; P1 skips only its turn-1 draw, P2 draws normally on its first turn; an empty library skips draw steps instead of throwing | done | §3.1, §3.2 |
 | Turn bookkeeping, one deploy per turn | done | §3.2 |
 | Deploy and pitch through the stack; priority window for the pusher's opponent (`priority_player`, `pass_priority`); auto-pass when the opponent cannot respond | done | §4.2, §4.3 |
 | Win check (Domain / Mono) after each resolution | done | §3.3 |
@@ -22,7 +22,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Mountain Destroy ETB: target declared up front at push time, required iff the opponent has a land, destroyed land goes to the graveyard, fizzles if the target is saved or gone (Mountain still enters) | done | §3.5 |
 | Plains Save (`cast_save`): window opens only if the player holds a Plains and a stack item targets one of their lands; can itself be countered | done | §3.5, §4.3 |
 | Choice prompts (`choice_player` / `choice_type` / `choice_options`): resolution pauses, every other action is rejected until the choosing player answers. Timeouts and random auto-choices are the server layer's job | done | §8.6 |
-| Swamp Extract ETB (`choose_extract`): no effect if the opponent's hand is empty (**implemented but untested**: no way to empty a hand in a test yet) | done | §3.5 |
+| Swamp Extract ETB (`choose_card`): no effect if the opponent's hand is empty (**implemented but untested**: no way to empty a hand in a test yet) | done | §3.5 |
 | Swamp Surveil 2 pitch (`choose_surveil`): peeks without drawing, bins any of the peeked cards, orders the rest back on top (`library_top_order[0]` becomes the top); short or empty library handled | done | §3.5 |
 | Choice prompts (Extract, Surveil, Flicker targets) | **not implemented** | §8.6 |
 | Mandatory deploy / empty-hand end / turn cap / tiebreak | **not implemented** | §3.6 |
