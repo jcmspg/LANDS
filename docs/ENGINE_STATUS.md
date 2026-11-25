@@ -13,7 +13,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Win check (Domain / Mono) after each resolution | done | §3.3 |
 | Shared graveyard | exists, **nothing writes to it yet** | §3.1 |
 | Forest Reclaim ETB: graveyard target declared up front, required iff the graveyard is non-empty, can take cards the opponent pitched, nothing if countered | done | §3.5, §8.4 |
-| Deploy ETBs Flicker, Extract | **not implemented**; they enter vanilla and `play_land` rejects a target for them | §3.5 |
+| Plains Flicker ETB | **not implemented**; Plains enters vanilla and `play_land` rejects a target for it | §3.5 |
 | Main-phase pitch: Forest Ramp, Mountain Rummage (`pitch_land`, 1/turn, goes through the stack) | done | §3.2, §3.4, §3.5 |
 | Island Draw ETB (no-op on empty library) | done | §3.5 |
 | Ramped deploy enters vanilla (`AbilityId::NONE`) | done, tested via Island Draw | §3.2 |
@@ -21,7 +21,9 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Battlefield tracks cards (not only counts); `battlefield(player)` getter | done | §6.3 |
 | Mountain Destroy ETB: target declared up front at push time, required iff the opponent has a land, destroyed land goes to the graveyard, fizzles if the target is saved or gone (Mountain still enters) | done | §3.5 |
 | Plains Save (`cast_save`): window opens only if the player holds a Plains and a stack item targets one of their lands; can itself be countered | done | §3.5, §4.3 |
-| Swamp Surveil | **not implemented** (`pitch_land` returns false) | §3.5 |
+| Choice prompts (`choice_player` / `choice_type` / `choice_options`): resolution pauses, every other action is rejected until the choosing player answers. Timeouts and random auto-choices are the server layer's job | done | §8.6 |
+| Swamp Extract ETB (`choose_extract`): no effect if the opponent's hand is empty (**implemented but untested**: no way to empty a hand in a test yet) | done | §3.5 |
+| Swamp Surveil 2 pitch (`choose_surveil`): peeks without drawing, bins any of the peeked cards, orders the rest back on top (`library_top_order[0]` becomes the top); short or empty library handled | done | §3.5 |
 | Choice prompts (Extract, Surveil, Flicker targets) | **not implemented** | §8.6 |
 | Mandatory deploy / empty-hand end / turn cap / tiebreak | **not implemented** | §3.6 |
 | Timers, AFK strikes | **not implemented** (belong to the server layer, not the pure engine) | §4.4 |
@@ -48,8 +50,9 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 3. ~~**Priority window + Island Counter** (Memory Lapse semantics, counter wars).~~ Done.
 4. ~~**Battlefield identity, Mountain Destroy, Plains Save.**~~ Done.
 5. ~~**Forest Reclaim.**~~ Done.
-6. **Choice prompts:** Swamp Extract and Surveil 2 (hidden-information choices during resolution), then Plains Flicker including re-triggered ETBs that gather fresh choices, the anti-loop rule, and no priority window for re-triggered ETBs.
-7. **Game end:** mandatory deploy, empty-hand loss, turn-50 cap, tiebreaker scoring.
-8. **Action log + replay** from seed, then the bot simulation harness (GDD Phase 1).
+6. ~~**Choice prompts:** Swamp Extract and Surveil 2.~~ Done.
+7. **Plains Flicker:** target declared up front (another land you control); re-triggers its deploy ETB inline with fresh choices (Destroy target, Reclaim target, Extract pick) and no priority window; anti-loop (flickering a Plains fizzles); vanilla with no valid target.
+8. **Game end:** mandatory deploy, empty-hand loss, turn-50 cap, tiebreaker scoring.
+9. **Action log + replay** from seed, then the bot simulation harness (GDD Phase 1).
 
 Order is a recommendation; reorder if a later slice unblocks something earlier.

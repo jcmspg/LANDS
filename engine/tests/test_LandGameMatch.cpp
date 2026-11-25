@@ -76,8 +76,8 @@ LandGameMatch make_match_where_only_p1_can_counter() {
     });
 }
 
-// A match where `player_index` holds every listed land type and the opponent holds
-// no Island, so no priority window opens and every action resolves immediately.
+// A match where `player_index` holds every listed land type plus two Plains and the opponent
+// holds no Island, so no priority window opens and every action resolves immediately.
 LandGameMatch make_match_with(int player_index, const std::vector<LandType>& land_types) {
     return make_match_where([&](const LandGameMatch& match) {
         for (LandType land_type : land_types) {
@@ -85,7 +85,9 @@ LandGameMatch make_match_with(int player_index, const std::vector<LandType>& lan
                 return false;
             }
         }
-        return !find_in_hand(match, 1 - player_index, LandType::ISLAND).has_value();
+        // two spare Plains keep plain_card() satisfiable after pitches and deploys
+        return count_in_hand(match, player_index, LandType::PLAINS) >= 2 &&
+               !find_in_hand(match, 1 - player_index, LandType::ISLAND).has_value();
     });
 }
 
@@ -98,7 +100,7 @@ void settle(LandGameMatch& match) {
 
 // Scenario for Destroy / Save: P0 deployed a land and P1 deployed one (`battlefield(1)[0]`),
 // and it is now P0's turn 2 with a Mountain in hand. Neither player starts with an Island
-// unless `p0_island` is set (P0 only); P1 starts with a Plains iff `p1_plains`.
+// unless `p0_island` is set (P0 only); P1 starts with exactly one Plains iff `p1_plains`.
 // `keep` lists land types P0 must still hold afterwards (Mountain is always kept).
 LandGameMatch make_destroy_scenario(bool p1_plains, bool p0_island,
                                     const std::vector<LandType>& keep = {}) {
@@ -112,7 +114,7 @@ LandGameMatch make_destroy_scenario(bool p1_plains, bool p0_island,
         if (!find_in_hand(match, 0, LandType::MOUNTAIN).has_value() ||
             find_in_hand(match, 0, LandType::ISLAND).has_value() != p0_island ||
             find_in_hand(match, 1, LandType::ISLAND).has_value() ||
-            find_in_hand(match, 1, LandType::PLAINS).has_value() != p1_plains) {
+            count_in_hand(match, 1, LandType::PLAINS) != (p1_plains ? 1 : 0)) {
             continue;
         }
         bool kept_all = true;
@@ -184,6 +186,47 @@ size_t total_lands(const LandGameMatch& match, int player_index) {
     return total;
 }
 
+std::vector<uint32_t> ids_of(const std::vector<Card>& cards) {
+    std::vector<uint32_t> ids;
+    for (const Card& card : cards) {
+        ids.push_back(card.get_identifier());
+    }
+    return ids;
+}
+
+bool hand_holds(const LandGameMatch& match, int player_index, uint32_t card_id) {
+    const auto& hand = match.hand(player_index);
+    return std::any_of(hand.begin(), hand.end(), [card_id](const Card& card) {
+        return card.get_identifier() == card_id;
+    });
+}
+
+
+// A card whose deploy needs no target and opens no choice right now: not an Island (Draw
+// changes hand sizes) or Swamp (Extract pauses for a choice), not a Mountain while the opponent
+// has lands, not a Forest while the graveyard has cards. Use it for "just deploy something".
+const Card& plain_card(const LandGameMatch& match, int player_index) {
+    for (const Card& card : match.hand(player_index)) {
+        const LandType land_type = card.get_land_type();
+        if (land_type == LandType::ISLAND || land_type == LandType::SWAMP) {
+            continue;
+        }
+        if (land_type == LandType::MOUNTAIN && total_lands(match, 1 - player_index) > 0) {
+            continue;
+        }
+        if (land_type == LandType::FOREST && match.graveyard_size() > 0) {
+            continue;
+        }
+        return card;
+    }
+    ADD_FAILURE() << "no plain card in hand";
+    return match.hand(player_index).front();
+}
+
+uint32_t plain_card_id(const LandGameMatch& match, int player_index) {
+    return plain_card(match, player_index).get_identifier();
+}
+
 } // namespace
 
 TEST(LandGameMatch, InitialState) {
@@ -235,15 +278,15 @@ TEST(LandGameMatch, PlayLand) {
 
     LandGameMatch match3(12345);
 
-    EXPECT_TRUE(match3.play_land(0, first_card_id(match3, 0)));
+    EXPECT_TRUE(match3.play_land(0, plain_card_id(match3, 0)));
     settle(match3);
     EXPECT_TRUE(match3.played_land_this_turn());
-    EXPECT_FALSE(match3.play_land(0, first_card_id(match3, 0)));  // second play same turn
+    EXPECT_FALSE(match3.play_land(0, plain_card_id(match3, 0)));  // second play same turn
     
     // assert hand/lands unchanged from after the first play
     EXPECT_TRUE(match3.end_turn(0));
     EXPECT_FALSE(match3.played_land_this_turn());
-    EXPECT_TRUE(match3.play_land(1, first_card_id(match3, 1)));   // opponent can play
+    EXPECT_TRUE(match3.play_land(1, plain_card_id(match3, 1)));   // opponent can play
     settle(match3);
     
 }
@@ -251,7 +294,7 @@ TEST(LandGameMatch, PlayLand) {
 TEST(LandGameMatch, PlayLandMovesExactlyOneCardToBoard) {
     LandGameMatch match(12345);
 
-    const Card played = match.hand(0).front();
+    const Card played = plain_card(match, 0);
 
     EXPECT_TRUE(match.play_land(0, played.get_identifier()));
     settle(match);
@@ -265,7 +308,7 @@ TEST(LandGameMatch, PlayLandMovesExactlyOneCardToBoard) {
 TEST(LandGameMatch, PlayLandByCardIdIgnoresHandPosition) {
     LandGameMatch match(12345);
 
-    const Card last = match.hand(0).back();
+    const Card last = plain_card(match, 0);
     EXPECT_TRUE(match.play_land(0, last.get_identifier()));
     settle(match);
     EXPECT_EQ(match.land_count(0, last.get_land_type()), 1);
@@ -315,7 +358,7 @@ TEST(LandGameMatch, ActionsRejectBadPlayerIndex) {
 TEST(LandGameMatch, Stack) {
     LandGameMatch match(12345);
     EXPECT_EQ(match.stack_size(), 0);
-    EXPECT_TRUE(match.play_land(0, first_card_id(match, 0)));
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
     settle(match);
     EXPECT_EQ(match.stack_size(), 0);
     EXPECT_TRUE(match.end_turn(0));
@@ -341,9 +384,9 @@ TEST(LandGameMatch, RampAllowsOneExtraDeploy) {
     LandGameMatch match = make_match_with(0, {LandType::FOREST});
 
     EXPECT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::FOREST)));
-    EXPECT_TRUE(match.play_land(0, match.hand(0)[0].get_identifier()));
-    EXPECT_TRUE(match.play_land(0, match.hand(0)[0].get_identifier()));     // the ramped deploy
-    EXPECT_FALSE(match.play_land(0, match.hand(0)[0].get_identifier()));    // only one extra
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));     // the ramped deploy
+    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));    // only one extra
     EXPECT_EQ(total_lands(match, 0), 2);
     EXPECT_EQ(match.hand_size(0), 2);               // 5 - 1 pitched - 2 deployed
     EXPECT_EQ(match.graveyard_size(), 1);
@@ -353,15 +396,15 @@ TEST(LandGameMatch, RampPitchedAfterFirstDeployStillGrantsExtraDeploy) {
     LandGameMatch match = make_match_with(0, {LandType::FOREST});
     const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
 
-    EXPECT_TRUE(match.play_land(0, first_card_other_than(match, 0, forest)));
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
     EXPECT_EQ(match.hand_size(0), 4);
 
     // a second deploy is illegal until Ramp resolves
-    EXPECT_FALSE(match.play_land(0, first_card_other_than(match, 0, forest)));
+    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));
 
     EXPECT_TRUE(match.pitch_land(0, forest));
-    EXPECT_TRUE(match.play_land(0, first_card_other_than(match, 0, forest)));
-    EXPECT_FALSE(match.play_land(0, first_card_other_than(match, 0, forest)));
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));
     EXPECT_EQ(total_lands(match, 0), 2);
     EXPECT_EQ(match.hand_size(0), 2);
     EXPECT_EQ(match.graveyard_size(), 1);
@@ -375,8 +418,8 @@ TEST(LandGameMatch, UnspentRampDoesNotCarryOver) {
     EXPECT_TRUE(match.end_turn(1));
 
     EXPECT_FALSE(match.pitched_this_turn());
-    EXPECT_TRUE(match.play_land(0, match.hand(0)[0].get_identifier()));
-    EXPECT_FALSE(match.play_land(0, match.hand(0)[0].get_identifier()));    // ramp expired
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));    // ramp expired
 }
 
 TEST(LandGameMatch, OnlyOneMainPhasePitchPerTurn) {
@@ -460,10 +503,10 @@ TEST(LandGameMatch, PitchRummageWithShortLibraryDrawsWhatRemains) {
     FAIL() << "no seed produced a Mountain in the active player's hand";
 }
 
-TEST(LandGameMatch, PitchRejectsInstantSpeedAndUnwiredPitches) {
-    LandGameMatch match = make_match_with(0, {LandType::PLAINS, LandType::ISLAND, LandType::SWAMP});
+TEST(LandGameMatch, PitchRejectsInstantSpeedPitches) {
+    LandGameMatch match = make_match_with(0, {LandType::PLAINS, LandType::ISLAND});
 
-    for (LandType land_type : {LandType::PLAINS, LandType::ISLAND, LandType::SWAMP}) {
+    for (LandType land_type : {LandType::PLAINS, LandType::ISLAND}) {
         const uint32_t card = *find_in_hand(match, 0, land_type);
         EXPECT_FALSE(match.pitch_land(0, card));
         EXPECT_FALSE(match.pitch_land(0, card, first_card_other_than(match, 0, card)));
@@ -517,7 +560,7 @@ TEST(LandGameMatch, RampedIslandEntersVanillaAndDrawsNothing) {
     const uint32_t island = *find_in_hand(match, 0, LandType::ISLAND);
 
     EXPECT_TRUE(match.pitch_land(0, forest));
-    EXPECT_TRUE(match.play_land(0, first_card_other_than(match, 0, island)));   // normal deploy
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));   // normal deploy
     ASSERT_FALSE(match.hand(0).empty());
     const size_t hand_before = match.hand_size(0);
     const size_t deck_before = match.deck_size();
@@ -553,7 +596,7 @@ TEST(LandGameMatch, DeployIslandWithEmptyLibraryStillEnters) {
 
 TEST(LandGameMatch, DeployOpensPriorityWindowWhenOpponentCanCounter) {
     LandGameMatch match = make_match_where_only_p1_can_counter();
-    const Card deployed = match.hand(0).front();
+    const Card deployed = plain_card(match, 0);
 
     EXPECT_EQ(match.priority_player(), -1);
     EXPECT_TRUE(match.play_land(0, deployed.get_identifier()));
@@ -570,7 +613,7 @@ TEST(LandGameMatch, DeployOpensPriorityWindowWhenOpponentCanCounter) {
 TEST(LandGameMatch, DeployAutoPassesWhenOpponentHasNoIsland) {
     LandGameMatch match = make_match_with(0, {LandType::FOREST});
 
-    EXPECT_TRUE(match.play_land(0, match.hand(0).front().get_identifier()));
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
     EXPECT_EQ(match.priority_player(), -1);
     EXPECT_EQ(match.stack_size(), 0);
     EXPECT_EQ(total_lands(match, 0), 1);
@@ -578,7 +621,7 @@ TEST(LandGameMatch, DeployAutoPassesWhenOpponentHasNoIsland) {
 
 TEST(LandGameMatch, PassPriorityResolvesPendingDeploy) {
     LandGameMatch match = make_match_where_only_p1_can_counter();
-    const Card deployed = match.hand(0).front();
+    const Card deployed = plain_card(match, 0);
     ASSERT_TRUE(match.play_land(0, deployed.get_identifier()));
 
     EXPECT_TRUE(match.pass_priority(1));
@@ -597,7 +640,7 @@ TEST(LandGameMatch, PriorityWindowBlocksOtherActions) {
                count_in_hand(m, 0, LandType::FOREST) >= 1;
     });
     const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
-    ASSERT_TRUE(match.play_land(0, first_card_not_of_type(match, 0, LandType::FOREST)));
+    ASSERT_TRUE(match.play_land(0, plain_card_id(match, 0)));
     ASSERT_EQ(match.priority_player(), 1);
 
     EXPECT_FALSE(match.play_land(0, forest));
@@ -615,7 +658,7 @@ TEST(LandGameMatch, PassPriorityRejectsWrongPlayerAndNoWindow) {
     EXPECT_FALSE(match.pass_priority(0));               // no window open
     EXPECT_FALSE(match.pass_priority(1));
 
-    ASSERT_TRUE(match.play_land(0, first_card_id(match, 0)));
+    ASSERT_TRUE(match.play_land(0, plain_card_id(match, 0)));
     EXPECT_FALSE(match.pass_priority(0));               // the pusher holds no priority
     EXPECT_FALSE(match.pass_priority(-1));
     EXPECT_FALSE(match.pass_priority(2));
@@ -625,7 +668,7 @@ TEST(LandGameMatch, PassPriorityRejectsWrongPlayerAndNoWindow) {
 
 TEST(LandGameMatch, CounterSendsDeployedLandToTopOfLibrary) {
     LandGameMatch match = make_match_where_only_p1_can_counter();
-    const Card deployed = match.hand(0).front();
+    const Card deployed = plain_card(match, 0);
     const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
     const uint32_t extra = first_card_other_than(match, 1, island);
     ASSERT_TRUE(match.play_land(0, deployed.get_identifier()));
@@ -641,7 +684,7 @@ TEST(LandGameMatch, CounterSendsDeployedLandToTopOfLibrary) {
 
     // the deploy is still used up, and the countered land is the next card drawn
     EXPECT_TRUE(match.played_land_this_turn());
-    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));
     EXPECT_TRUE(match.end_turn(0));
     EXPECT_TRUE(match.end_turn(1));                     // P0 draws: Memory Lapse
     EXPECT_NE(std::find(match.hand(0).begin(), match.hand(0).end(), deployed), match.hand(0).end());
@@ -670,7 +713,8 @@ TEST(LandGameMatch, CounterFizzlesPitchEffect) {
 
 TEST(LandGameMatch, CounteredRampGrantsNoExtraDeploy) {
     LandGameMatch match = make_match_where([](const LandGameMatch& m) {
-        return count_in_hand(m, 1, LandType::ISLAND) == 1 &&
+        return count_in_hand(m, 0, LandType::PLAINS) >= 2 &&
+               count_in_hand(m, 1, LandType::ISLAND) == 1 &&
                count_in_hand(m, 0, LandType::ISLAND) == 0 &&
                count_in_hand(m, 0, LandType::FOREST) >= 1;
     });
@@ -680,8 +724,8 @@ TEST(LandGameMatch, CounteredRampGrantsNoExtraDeploy) {
     ASSERT_TRUE(match.cast_counter(1, island, first_card_other_than(match, 1, island),
                                    match.stack_top().stack_id));
 
-    EXPECT_TRUE(match.play_land(0, first_card_id(match, 0)));
-    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));  // no ramp was granted
+    EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));  // no ramp was granted
     EXPECT_EQ(total_lands(match, 0), 1);
 }
 
@@ -692,8 +736,7 @@ TEST(LandGameMatch, CounterWarResolvesLifo) {
     });
     const uint32_t island0 = *find_in_hand(match, 0, LandType::ISLAND);
     const uint32_t island1 = *find_in_hand(match, 1, LandType::ISLAND);
-    const Card deployed = match.hand(0)[0].get_land_type() == LandType::ISLAND
-                              ? match.hand(0)[1] : match.hand(0)[0];
+    const Card deployed = plain_card(match, 0);
     ASSERT_TRUE(match.play_land(0, deployed.get_identifier()));
     ASSERT_EQ(match.priority_player(), 1);
 
@@ -727,7 +770,7 @@ TEST(LandGameMatch, CounterRejectionsLeaveStateUntouched) {
     // no window open yet
     EXPECT_FALSE(match.cast_counter(1, island, extra, 1));
 
-    ASSERT_TRUE(match.play_land(0, first_card_id(match, 0)));
+    ASSERT_TRUE(match.play_land(0, plain_card_id(match, 0)));
     const uint32_t target = match.stack_top().stack_id;
 
     EXPECT_FALSE(match.cast_counter(0, island, extra, target));         // P1 holds priority, not P0
@@ -967,6 +1010,248 @@ TEST(LandGameMatch, CounteredForestReclaimsNothing) {
     EXPECT_EQ(match.land_count(0, LandType::FOREST), 0);
     EXPECT_EQ(match.graveyard_size(), 4);                           // Mountain, discard, Island, cost card
     EXPECT_EQ(match.deck_size(), 38);                               // the Forest went on top of the library
+}
+
+TEST(LandGameMatch, DeploySwampPausesForExtractChoice) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    EXPECT_EQ(match.land_count(0, LandType::SWAMP), 1);
+    EXPECT_EQ(match.choice_player(), 0);
+    EXPECT_EQ(match.choice_type(), ChoiceType::EXTRACT);
+    EXPECT_EQ(ids_of(match.choice_options()), ids_of(match.hand(1)));   // the opponent's whole hand
+    EXPECT_EQ(match.hand_size(1), 6);                                   // nothing discarded yet
+    EXPECT_EQ(match.graveyard_size(), 0);
+    EXPECT_EQ(match.stack_size(), 0);
+}
+
+TEST(LandGameMatch, PendingChoiceBlocksOtherActions) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP, LandType::FOREST});
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    ASSERT_EQ(match.choice_type(), ChoiceType::EXTRACT);
+
+    EXPECT_FALSE(match.pitch_land(0, *find_in_hand(match, 0, LandType::FOREST)));
+    EXPECT_FALSE(match.end_turn(0));
+    EXPECT_FALSE(match.pass_priority(0));
+    EXPECT_FALSE(match.pass_priority(1));
+    EXPECT_EQ(match.choice_type(), ChoiceType::EXTRACT);
+    EXPECT_FALSE(match.pitched_this_turn());
+}
+
+TEST(LandGameMatch, ExtractDiscardsTheChosenOpponentCard) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    const Card chosen = match.hand(1)[2];
+
+    EXPECT_TRUE(match.choose_extract(0, chosen.get_identifier()));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.choice_type(), ChoiceType::NONE);
+    EXPECT_TRUE(match.choice_options().empty());
+    EXPECT_EQ(match.hand_size(1), 5);
+    EXPECT_FALSE(hand_holds(match, 1, chosen.get_identifier()));
+    ASSERT_EQ(match.graveyard_size(), 1);                               // public the moment it lands
+    EXPECT_EQ(match.hand_size(0), 4);                                   // P0's own hand is untouched
+    EXPECT_TRUE(match.end_turn(0));                                     // the game moves on
+}
+
+TEST(LandGameMatch, ExtractRejectionsKeepTheChoicePending) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+    EXPECT_FALSE(match.choose_extract(0, 0));                           // nothing pending yet
+
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    const uint32_t opponent_card = first_card_id(match, 1);
+
+    EXPECT_FALSE(match.choose_extract(1, opponent_card));               // only the Swamp's controller answers
+    EXPECT_FALSE(match.choose_extract(-1, opponent_card));
+    EXPECT_FALSE(match.choose_extract(2, opponent_card));
+    EXPECT_FALSE(match.choose_extract(0, first_card_id(match, 0)));     // own card is not an option
+    EXPECT_FALSE(match.choose_extract(0, 9999));
+    EXPECT_FALSE(match.choose_surveil(0, {}, {}));                      // wrong kind of answer
+
+    EXPECT_EQ(match.choice_player(), 0);
+    EXPECT_EQ(match.hand_size(1), 6);
+    EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, RampedSwampEntersVanilla) {
+    LandGameMatch match = make_match_with(0, {LandType::FOREST, LandType::SWAMP});
+    ASSERT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::FOREST)));
+    ASSERT_TRUE(match.play_land(0, plain_card_id(match, 0)));
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));  // the ramped deploy
+    EXPECT_EQ(match.land_count(0, LandType::SWAMP), 1);
+    EXPECT_EQ(match.choice_player(), -1);
+}
+
+TEST(LandGameMatch, CounteredSwampOffersNoChoice) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 1, LandType::ISLAND) == 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0 &&
+               count_in_hand(m, 0, LandType::SWAMP) >= 1;
+    });
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_TRUE(match.cast_counter(1, island, first_card_other_than(match, 1, island),
+                                   match.stack_top().stack_id));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.land_count(0, LandType::SWAMP), 0);
+    EXPECT_EQ(match.hand_size(1), 4);                                   // only the counter's costs left it
+}
+
+TEST(LandGameMatch, PitchSurveilPausesForChoice) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+    const uint32_t swamp = *find_in_hand(match, 0, LandType::SWAMP);
+
+    EXPECT_TRUE(match.pitch_land(0, swamp));
+    EXPECT_TRUE(match.pitched_this_turn());
+    EXPECT_EQ(match.choice_player(), 0);
+    EXPECT_EQ(match.choice_type(), ChoiceType::SURVEIL);
+    EXPECT_EQ(match.choice_options().size(), 2);                        // the top 2 cards
+    EXPECT_EQ(match.deck_size(), 39);                                   // peeked, not drawn
+    EXPECT_EQ(match.graveyard_size(), 1);                               // the pitched Swamp
+    EXPECT_EQ(total_lands(match, 0), 0);
+    EXPECT_FALSE(match.end_turn(0));                                    // blocked until answered
+    EXPECT_FALSE(match.pitch_land(0, plain_card_id(match, 0)));
+}
+
+TEST(LandGameMatch, SurveilBinsAndKeepsTheChosenCards) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+    ASSERT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    const uint32_t top = match.choice_options()[0].get_identifier();
+    const uint32_t second = match.choice_options()[1].get_identifier();
+
+    EXPECT_TRUE(match.choose_surveil(0, {top}, {second}));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.deck_size(), 38);                                   // one card binned
+    EXPECT_EQ(match.graveyard_size(), 2);
+
+    EXPECT_TRUE(match.end_turn(0));
+    EXPECT_TRUE(match.end_turn(1));                                     // P0 draws the kept card
+    EXPECT_TRUE(hand_holds(match, 0, second));
+    EXPECT_FALSE(hand_holds(match, 0, top));
+}
+
+TEST(LandGameMatch, SurveilOrdersTheKeptCards) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+    ASSERT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    const uint32_t first = match.choice_options()[0].get_identifier();
+    const uint32_t second = match.choice_options()[1].get_identifier();
+
+    LandGameMatch reversed = match;
+    EXPECT_TRUE(match.choose_surveil(0, {}, {first, second}));          // library_top_order[0] is the new top
+    EXPECT_EQ(match.deck_size(), 39);
+    EXPECT_EQ(match.graveyard_size(), 1);
+    ASSERT_TRUE(match.end_turn(0));
+    ASSERT_TRUE(match.end_turn(1));                                     // P0 draws first
+    EXPECT_TRUE(hand_holds(match, 0, first));
+    ASSERT_TRUE(match.end_turn(0));                                     // P1 draws second
+    EXPECT_TRUE(hand_holds(match, 1, second));
+
+    EXPECT_TRUE(reversed.choose_surveil(0, {}, {second, first}));
+    ASSERT_TRUE(reversed.end_turn(0));
+    ASSERT_TRUE(reversed.end_turn(1));
+    EXPECT_TRUE(hand_holds(reversed, 0, second));
+    ASSERT_TRUE(reversed.end_turn(0));
+    EXPECT_TRUE(hand_holds(reversed, 1, first));
+}
+
+TEST(LandGameMatch, SurveilCanBinEverything) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+    ASSERT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    const std::vector<uint32_t> both = ids_of(match.choice_options());
+
+    EXPECT_TRUE(match.choose_surveil(0, both, {}));
+    EXPECT_EQ(match.deck_size(), 37);
+    EXPECT_EQ(match.graveyard_size(), 3);                               // Swamp + both surveilled cards
+}
+
+TEST(LandGameMatch, SurveilRejectionsKeepTheChoicePending) {
+    LandGameMatch match = make_match_with(0, {LandType::SWAMP});
+    EXPECT_FALSE(match.choose_surveil(0, {}, {}));                      // nothing pending yet
+
+    ASSERT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    const uint32_t a = match.choice_options()[0].get_identifier();
+    const uint32_t b = match.choice_options()[1].get_identifier();
+
+    EXPECT_FALSE(match.choose_surveil(1, {a}, {b}));                    // not the surveilling player
+    EXPECT_FALSE(match.choose_surveil(0, {a}, {}));                     // b is unaccounted for
+    EXPECT_FALSE(match.choose_surveil(0, {}, {a}));
+    EXPECT_FALSE(match.choose_surveil(0, {a}, {a, b}));                 // a named twice
+    EXPECT_FALSE(match.choose_surveil(0, {a, a}, {b}));
+    EXPECT_FALSE(match.choose_surveil(0, {a, b}, {a}));
+    EXPECT_FALSE(match.choose_surveil(0, {a}, {9999}));                 // not a peeked card
+    EXPECT_FALSE(match.choose_surveil(0, {a, b, 9999}, {}));            // too many ids
+    EXPECT_FALSE(match.choose_extract(0, a));                           // wrong kind of answer
+
+    EXPECT_EQ(match.choice_type(), ChoiceType::SURVEIL);
+    EXPECT_EQ(match.deck_size(), 39);
+    EXPECT_EQ(match.graveyard_size(), 1);
+}
+
+TEST(LandGameMatch, SurveilWithShortLibraryPeeksWhatRemains) {
+    for (uint64_t seed = 1; seed < 1000; ++seed) {
+        LandGameMatch match(seed);
+        while (match.deck_size() > 1) {
+            ASSERT_TRUE(match.end_turn(match.active_player()));
+        }
+        const int player = match.active_player();
+        const std::optional<uint32_t> swamp = find_in_hand(match, player, LandType::SWAMP);
+        if (!swamp.has_value()) {
+            continue;
+        }
+
+        EXPECT_TRUE(match.pitch_land(player, *swamp));
+        settle(match);                                                  // the opponent may hold an Island
+        ASSERT_EQ(match.choice_type(), ChoiceType::SURVEIL);
+        EXPECT_EQ(match.choice_options().size(), 1);
+        const uint32_t only = match.choice_options()[0].get_identifier();
+        EXPECT_TRUE(match.choose_surveil(player, {}, {only}));
+        EXPECT_EQ(match.deck_size(), 1);
+        return;
+    }
+    FAIL() << "no seed produced a Swamp in the active player's hand";
+}
+
+TEST(LandGameMatch, SurveilWithEmptyLibraryOffersNoChoice) {
+    for (uint64_t seed = 1; seed < 1000; ++seed) {
+        LandGameMatch match(seed);
+        while (match.deck_size() > 0) {
+            ASSERT_TRUE(match.end_turn(match.active_player()));
+        }
+        const int player = match.active_player();
+        const std::optional<uint32_t> swamp = find_in_hand(match, player, LandType::SWAMP);
+        if (!swamp.has_value()) {
+            continue;
+        }
+
+        EXPECT_TRUE(match.pitch_land(player, *swamp));
+        settle(match);
+        EXPECT_EQ(match.choice_player(), -1);
+        EXPECT_EQ(match.deck_size(), 0);
+        EXPECT_TRUE(match.pitched_this_turn());
+        return;
+    }
+    FAIL() << "no seed produced a Swamp in the active player's hand";
+}
+
+TEST(LandGameMatch, CounteredSurveilOffersNoChoice) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 1, LandType::ISLAND) == 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0 &&
+               count_in_hand(m, 0, LandType::SWAMP) >= 1;
+    });
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    ASSERT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_TRUE(match.cast_counter(1, island, first_card_other_than(match, 1, island),
+                                   match.stack_top().stack_id));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.deck_size(), 39);
+    EXPECT_EQ(match.graveyard_size(), 3);                               // Swamp, Island, cost card
+    EXPECT_TRUE(match.pitched_this_turn());
 }
 
 } // namespace lands

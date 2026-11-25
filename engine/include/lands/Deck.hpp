@@ -23,6 +23,7 @@ class Deck {
         Card draw();
         void shuffle(uint64_t seed);
         void put_on_top(const Card& card);
+        std::vector<Card> peek_top(size_t count) const;   // top card first; fewer if the deck is short
 
     private:
         std::vector<Card> cards_; // back() = top card

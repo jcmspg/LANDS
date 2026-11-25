@@ -99,7 +99,7 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id,
     if (player_index != active_player_) {
         return false;
     }
-    if (priority_player_ != -1) {   // a window is open: respond or pass first
+    if (action_blocked()) {     // a window or choice is pending: answer it first
         return false;
     }
     if (!players_[player_index].has_card(card_id)) {
@@ -150,7 +150,7 @@ bool LandGameMatch::pitch_land(int player_index, uint32_t card_id,
     if (player_index != active_player_) {
         return false;
     }
-    if (priority_player_ != -1) {
+    if (action_blocked()) {
         return false;
     }
     if (pitched_this_turn_) {
@@ -166,8 +166,9 @@ bool LandGameMatch::pitch_land(int player_index, uint32_t card_id,
     if (def.pitch_timing != PitchTiming::MainPhase) {
         return false;
     }
-    // Surveil needs a choice prompt, which does not exist yet
-    if (def.pitch_ability != AbilityId::RAMP && def.pitch_ability != AbilityId::RUMMAGE) {
+    // Island / Plains pitches are reactive and go through cast_counter / cast_save
+    if (def.pitch_ability != AbilityId::RAMP && def.pitch_ability != AbilityId::RUMMAGE &&
+        def.pitch_ability != AbilityId::SURVEIL) {
         return false;
     }
 
@@ -287,6 +288,68 @@ bool LandGameMatch::pass_priority(int player_index) {
     return true;
 }
 
+bool LandGameMatch::action_blocked() const {
+    return priority_player_ != -1 || pending_choice_.type != ChoiceType::NONE;
+}
+
+int LandGameMatch::choice_player() const {
+    return pending_choice_.player;
+}
+
+ChoiceType LandGameMatch::choice_type() const {
+    return pending_choice_.type;
+}
+
+const std::vector<Card>& LandGameMatch::choice_options() const {
+    return pending_choice_.options;
+}
+
+bool LandGameMatch::choose_extract(int player_index, uint32_t card_id) {
+    if (pending_choice_.type != ChoiceType::EXTRACT || player_index != pending_choice_.player) {
+        return false;
+    }
+    if (find_card(pending_choice_.options, card_id) == nullptr) {
+        return false;
+    }
+    // the chosen card leaves the opponent's hand and becomes public in the graveyard
+    graveyard_.add(players_[1 - player_index].take_from_hand(card_id));
+    pending_choice_ = PendingChoice{};
+    return true;
+}
+
+bool LandGameMatch::choose_surveil(int player_index, const std::vector<uint32_t>& to_graveyard,
+                                   const std::vector<uint32_t>& library_top_order) {
+    if (pending_choice_.type != ChoiceType::SURVEIL || player_index != pending_choice_.player) {
+        return false;
+    }
+
+    // every peeked card must be named exactly once, and nothing else
+    std::vector<uint32_t> named = to_graveyard;
+    named.insert(named.end(), library_top_order.begin(), library_top_order.end());
+    const std::vector<Card>& options = pending_choice_.options;
+    if (named.size() != options.size()) {
+        return false;
+    }
+    for (const Card& option : options) {
+        if (std::count(named.begin(), named.end(), option.get_identifier()) != 1) {
+            return false;
+        }
+    }
+
+    // the peeked cards are the top of the library: take them off, then place them
+    for (size_t i = 0; i < options.size(); ++i) {
+        deck_.draw();
+    }
+    for (uint32_t card_id : to_graveyard) {
+        graveyard_.add(*find_card(options, card_id));
+    }
+    for (auto it = library_top_order.rbegin(); it != library_top_order.rend(); ++it) {
+        deck_.put_on_top(*find_card(options, *it));
+    }
+    pending_choice_ = PendingChoice{};
+    return true;
+}
+
 int LandGameMatch::priority_player() const {
     return priority_player_;
 }
@@ -350,7 +413,7 @@ bool LandGameMatch::end_turn(int player_index) {
     if (player_index != active_player_) {
         return false;
     }
-    if (priority_player_ != -1) {
+    if (action_blocked()) {
         return false;
     }
     played_land_ = false;
@@ -429,8 +492,16 @@ void LandGameMatch::resolve_top_action() {
                         players_[item.caster_id].add_to_hand(graveyard_.take_card(*item.target_card_id));
                     }
                     break;
+                case AbilityId::EXTRACT: {
+                    // look at the opponent's hand and take one card; no effect if it is empty
+                    const std::vector<Card>& opponent_hand = players_[1 - item.caster_id].hand();
+                    if (!opponent_hand.empty()) {
+                        pending_choice_ = PendingChoice{ChoiceType::EXTRACT, item.caster_id, opponent_hand};
+                    }
+                    break;
+                }
                 default:
-                    break;  // Flicker / Extract are not wired up yet
+                    break;  // Flicker is not wired up yet
             }
 
             WinEvaluator eval;
@@ -461,8 +532,16 @@ void LandGameMatch::resolve_top_action() {
                     // everything below this item on the stack that targets the land fizzles
                     saved_card_ids_.push_back(*item.target_card_id);
                     break;
+                case AbilityId::SURVEIL: {
+                    // peek at the top 2 cards; nothing to decide if the library is empty
+                    std::vector<Card> peeked = deck_.peek_top(2);
+                    if (!peeked.empty()) {
+                        pending_choice_ = PendingChoice{ChoiceType::SURVEIL, item.caster_id, std::move(peeked)};
+                    }
+                    break;
+                }
                 default:
-                    break;  // Surveil is not wired up yet
+                    break;
             }
         }
     }

@@ -5,6 +5,7 @@
 #include "lands/WinEvaluator.hpp"
 #include "lands/Graveyard.hpp"
 #include "lands/ActionStack.hpp"
+#include "lands/Choice.hpp"
 
 #include <optional>
 #include <vector>
@@ -32,6 +33,17 @@ class LandGameMatch {
 
         // Decline to respond; the whole stack then resolves top to bottom.
         bool pass_priority(int player_index);
+
+        // Mid-resolution choices (Swamp Extract / Surveil). Resolution pauses until the
+        // choosing player answers; every other action is rejected meanwhile.
+        int choice_player() const;                          // -1 if no choice is pending
+        ChoiceType choice_type() const;
+        const std::vector<Card>& choice_options() const;    // private to choice_player()
+        bool choose_extract(int player_index, uint32_t card_id);
+        // to_graveyard + library_top_order must partition the options exactly;
+        // library_top_order[0] becomes the new top card of the library.
+        bool choose_surveil(int player_index, const std::vector<uint32_t>& to_graveyard,
+                            const std::vector<uint32_t>& library_top_order);
 
         // Player who currently holds a priority window, or -1 if none is open.
         int priority_player() const;
@@ -81,6 +93,8 @@ class LandGameMatch {
 
         // priority window
         int priority_player_{-1};
+        PendingChoice pending_choice_;
+        bool action_blocked() const;   // a window or a choice is pending
         std::vector<uint32_t> countered_ids_;   // stack ids countered during this resolution
         std::vector<uint32_t> saved_card_ids_;  // lands saved during this resolution
         bool valid_deploy_target(int caster_index, AbilityId ability,

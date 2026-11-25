@@ -38,6 +38,14 @@ void Deck::put_on_top(const Card& card) {
     cards_.push_back(card);
 }
 
+std::vector<Card> Deck::peek_top(size_t count) const {
+    std::vector<Card> top;
+    for (size_t i = 0; i < count && i < cards_.size(); ++i) {
+        top.push_back(cards_[cards_.size() - 1 - i]);
+    }
+    return top;
+}
+
 Card Deck::draw() {
     if (cards_.empty()) {
         throw std::runtime_error("Deck::draw: deck is empty");

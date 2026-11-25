@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace lands {
 
@@ -79,6 +80,28 @@ TEST(Deck, ShuffleKeepsTenOfEachLandType) {
     for (int count : counts) {
         EXPECT_EQ(count, 10);
     }
+}
+
+TEST(Deck, PeekTopShowsTopCardsWithoutDrawing) {
+    Deck deck;
+    deck.shuffle(12345);
+
+    const std::vector<Card> peeked = deck.peek_top(2);
+    ASSERT_EQ(peeked.size(), 2);
+    EXPECT_EQ(deck.deck_size(), Deck::deck_size_);      // nothing was drawn
+    EXPECT_EQ(deck.draw(), peeked[0]);                  // top card first
+    EXPECT_EQ(deck.draw(), peeked[1]);
+}
+
+TEST(Deck, PeekTopOnShortDeckReturnsWhatRemains) {
+    Deck deck;
+    while (deck.deck_size() > 1) {
+        deck.draw();
+    }
+    EXPECT_EQ(deck.peek_top(2).size(), 1);
+    EXPECT_TRUE(deck.peek_top(0).empty());
+    deck.draw();
+    EXPECT_TRUE(deck.peek_top(2).empty());
 }
 
 TEST(Deck, PutOnTop) {
