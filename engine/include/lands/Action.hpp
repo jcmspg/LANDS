@@ -18,6 +18,12 @@ enum class ActionType : uint8_t {
     CHOOSE_SURVEIL,    // to_graveyard + top_order partition the peeked cards
     END_TURN,
     CONCEDE,
+    // Timer events (GDD §4.4). The server's clocks fire them; the random pick they make is
+    // re-derived on replay from the match's seeded RNG, so only the event itself is logged.
+    MAIN_PHASE_TIMEOUT,
+    PRIORITY_TIMEOUT,
+    CHOICE_TIMEOUT,
+    DISCONNECT_FORFEIT,
 };
 
 struct Action {

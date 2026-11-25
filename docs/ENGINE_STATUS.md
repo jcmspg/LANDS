@@ -27,13 +27,16 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Swamp Surveil 2 pitch (`choose_surveil`): peeks without drawing, bins any of the peeked cards, orders the rest back on top (`library_top_order[0]` becomes the top); short or empty library handled | done | §3.5 |
 | Choice prompts (Extract, Surveil, Flicker targets) | **not implemented** | §8.6 |
 | Game end: result API (`game_over`, `winner_player`, `end_reason`, `is_draw`), Domain / Mono win, `concede`, deploy lock (empty hand when the deploy is due: at turn start after the draw, or at `end_turn` with no deploy made), turn cap (end of round 25 = turn 50), tiebreak scoring (`WinEvaluator::tiebreak_winner`). Every action is rejected afterwards and pending windows / choices are cleared | done | §3.3, §3.6, §8.10 |
-| AFK strikes, disconnect forfeit | **not implemented** (server-layer accounting; the engine only needs a way to apply the resulting forfeit) | §3.6 |
-| Timers themselves (60s / 10s / 15s clocks) | not an engine concern: the server's event loop owns them (§6.3); the engine only gets the resulting events (see slice 10) | §4.4 |
+| Timer events (`main_phase_timeout`, `priority_timeout`, `choice_timeout`): auto-deploy a uniformly random legal card + target, auto-pass, uniformly random legal choice; the match-owned seeded RNG makes them replay exactly and only the event is logged | done | §3.2, §4.4, §8.6 |
+| AFK strikes (`afk_strikes`, 3 = `AFK_FORFEIT`); `disconnect_forfeit` for the server's blown-grace case | done | §3.6 |
+| The clocks themselves (60s / 10s / 15s, disconnect grace) | not an engine concern: the server's event loop owns them (§6.3) and calls the timer events above | §4.4 |
 | `Action` type, `apply`, append-only `action_log()`, `replay(seed, log)`; rejected actions are never logged | done | §6.3 |
 | `legal_actions(player)`: exactly the set of actions the engine accepts (concede aside), checked against a brute-force oracle over random games; `deploy_due()` | done | §10 |
 
 ## Known deviations from the GDD (intentional, temporary)
 
+- **Main-phase timeout semantics are an interpretation.** The GDD says expiry auto-deploys and records a strike; it does not say what happens when the deploy is already made. The engine ends the turn in that case (still +1 strike). An auto-deploy that opens a window or choice leaves the turn running; the server's next expiry ends it.
+- **RNG portability.** Timer picks use `mt19937_64 % n` and are identical across standard libraries; the library shuffle uses `std::shuffle`, whose result may differ between libstdc++ and libc++, so a seed replays bit-for-bit on the same toolchain only.
 - **Mandatory deploy is not enforced by `end_turn`.** The GDD makes the deploy mandatory but the protocol has no `END_TURN` intent: the server's main-phase timer auto-deploys a random legal card instead. The engine therefore lets `end_turn` pass without a deploy (it is also what lets tests burn through the library), and only ends the game when the hand is empty at the time the deploy is due.
 - `ActionStack` is a bare LIFO; the fixed stack grammar (§4.1) is enforced only by how `LandGameMatch` pushes (one sorcery-speed bottom item, then counters), not by the container.
 - No timers: the 10s window never expires on its own. The server layer will call `pass_priority` on timeout.
@@ -59,7 +62,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 6. ~~**Choice prompts:** Swamp Extract and Surveil 2.~~ Done.
 7. ~~**Plains Flicker.**~~ Done.
 8. ~~**Game end:** deploy lock, turn-50 cap, tiebreaker scoring, concede.~~ Done.
-9. **Timer events and the random-legal-action rule** (builds on `legal_actions`): engine-side effects of timeouts (auto-deploy a uniformly random legal card, random legal choice, auto-pass), driven by a match-owned seeded RNG so they replay; AFK strike accounting and the 3-strike forfeit.
+9. ~~**Timer events and the random-legal-action rule** (builds on `legal_actions`):~~ Done. engine-side effects of timeouts (auto-deploy a uniformly random legal card, random legal choice, auto-pass), driven by a match-owned seeded RNG so they replay; AFK strike accounting and the 3-strike forfeit.
 10. ~~**Action log + replay.**~~ Done (slice 9, delivered before the timer events).
 11. **Simulation harness (GDD Phase 1 test criterion):** a CLI that plays 10,000 random-bot matches, checks every one terminates and replays bit-for-bit, and reports P1 / P2 win rates.
 

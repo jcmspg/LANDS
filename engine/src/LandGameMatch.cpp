@@ -23,6 +23,19 @@ void require_land_type(LandType land_type) {
     }
 }
 
+// While alive, actions applied on a timer event's behalf are not logged separately:
+// the event itself is the log entry, and replay re-derives the random pick.
+class ScopedLogPause {
+    public:
+        explicit ScopedLogPause(int& counter) : counter_(counter) { ++counter_; }
+        ~ScopedLogPause() { --counter_; }
+        ScopedLogPause(const ScopedLogPause&) = delete;
+        ScopedLogPause& operator=(const ScopedLogPause&) = delete;
+
+    private:
+        int& counter_;
+};
+
 const Card* find_card(const std::vector<Card>& hand, uint32_t card_id) {
     const auto it = std::find_if(hand.begin(), hand.end(), [card_id](const Card& card) {
         return card.get_identifier() == card_id;
@@ -38,9 +51,10 @@ Deck shuffled_deck(uint64_t seed) {
 
 } // namespace
 
-LandGameMatch::LandGameMatch(uint64_t seed) : LandGameMatch(shuffled_deck(seed)) {}
+LandGameMatch::LandGameMatch(uint64_t seed) : LandGameMatch(shuffled_deck(seed), seed) {}
 
-LandGameMatch::LandGameMatch(Deck deck) : deck_(std::move(deck)) {
+LandGameMatch::LandGameMatch(Deck deck, uint64_t rng_seed)
+    : deck_(std::move(deck)), rng_(rng_seed ^ 0x9E3779B97F4A7C15ULL) {
     deal_to(players_[0], 5);
     deal_to(players_[1], 6);
 }
@@ -312,7 +326,91 @@ bool LandGameMatch::action_blocked() const {
 }
 
 void LandGameMatch::record(Action action) {
-    action_log_.push_back(std::move(action));
+    if (log_paused_ == 0) {
+        action_log_.push_back(std::move(action));
+    }
+}
+
+size_t LandGameMatch::pick_index(size_t count) {
+    // modulo on the raw engine output keeps picks identical across standard libraries
+    return static_cast<size_t>(rng_() % count);
+}
+
+int LandGameMatch::afk_strikes(int player_index) const {
+    require_player_index(player_index);
+    return afk_strikes_[player_index];
+}
+
+bool LandGameMatch::give_strike(int player_index) {
+    if (++afk_strikes_[player_index] >= kMaxAfkStrikes) {
+        end_game(GameEndReason::AFK_FORFEIT, 1 - player_index);
+        return true;
+    }
+    return false;
+}
+
+bool LandGameMatch::main_phase_timeout(int player_index) {
+    if (player_index < 0 || player_index >= 2 || player_index != active_player_ || action_blocked()) {
+        return false;
+    }
+    record(Action{ActionType::MAIN_PHASE_TIMEOUT, player_index, 0, std::nullopt, std::nullopt, {}, {}});
+    if (give_strike(player_index)) {
+        return true;
+    }
+
+    ScopedLogPause pause(log_paused_);
+    if (!deploy_due()) {
+        return end_turn(player_index);      // the main phase simply runs out
+    }
+
+    // a uniformly random legal card, then a uniformly random legal target for it
+    std::vector<uint32_t> card_ids;
+    std::vector<Action> deploys;
+    for (const Action& action : main_phase_actions(player_index)) {
+        if (action.type == ActionType::PLAY_LAND) {
+            deploys.push_back(action);
+            if (std::find(card_ids.begin(), card_ids.end(), action.card_id) == card_ids.end()) {
+                card_ids.push_back(action.card_id);
+            }
+        }
+    }
+    const uint32_t card_id = card_ids[pick_index(card_ids.size())];
+    std::vector<Action> of_card;
+    std::copy_if(deploys.begin(), deploys.end(), std::back_inserter(of_card),
+                 [card_id](const Action& action) { return action.card_id == card_id; });
+    return apply(of_card[pick_index(of_card.size())]);
+}
+
+bool LandGameMatch::priority_timeout(int player_index) {
+    if (player_index < 0 || player_index >= 2 || player_index != priority_player_) {
+        return false;
+    }
+    record(Action{ActionType::PRIORITY_TIMEOUT, player_index, 0, std::nullopt, std::nullopt, {}, {}});
+    ScopedLogPause pause(log_paused_);
+    return pass_priority(player_index);     // a slow pass is a legitimate bluff: no strike
+}
+
+bool LandGameMatch::choice_timeout(int player_index) {
+    if (player_index < 0 || player_index >= 2 || pending_choice_.type == ChoiceType::NONE ||
+        player_index != pending_choice_.player) {
+        return false;
+    }
+    record(Action{ActionType::CHOICE_TIMEOUT, player_index, 0, std::nullopt, std::nullopt, {}, {}});
+    if (give_strike(player_index)) {
+        return true;
+    }
+    ScopedLogPause pause(log_paused_);
+    const std::vector<Action> answers = choice_actions(player_index);
+    return apply(answers[pick_index(answers.size())]);
+}
+
+bool LandGameMatch::disconnect_forfeit(int player_index) {
+    if (player_index < 0 || player_index >= 2 || game_over()) {
+        return false;
+    }
+    record(Action{ActionType::DISCONNECT_FORFEIT, player_index, 0, std::nullopt, std::nullopt, {}, {}});
+    end_game(GameEndReason::DISCONNECT_FORFEIT, 1 - player_index);
+    return true;
 }
 
 const std::vector<Action>& LandGameMatch::action_log() const {
@@ -341,6 +439,14 @@ bool LandGameMatch::apply(const Action& action) {
             return end_turn(action.player);
         case ActionType::CONCEDE:
             return concede(action.player);
+        case ActionType::MAIN_PHASE_TIMEOUT:
+            return main_phase_timeout(action.player);
+        case ActionType::PRIORITY_TIMEOUT:
+            return priority_timeout(action.player);
+        case ActionType::CHOICE_TIMEOUT:
+            return choice_timeout(action.player);
+        case ActionType::DISCONNECT_FORFEIT:
+            return disconnect_forfeit(action.player);
     }
     return false;
 }

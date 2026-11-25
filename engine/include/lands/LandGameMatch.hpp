@@ -10,6 +10,7 @@
 #include "lands/GameEnd.hpp"
 
 #include <optional>
+#include <random>
 #include <vector>
 
 namespace lands {
@@ -17,7 +18,8 @@ namespace lands {
 class LandGameMatch {
     public:
         explicit LandGameMatch(uint64_t seed);   // shuffle + deal
-        explicit LandGameMatch(Deck deck);       // deal from the deck exactly as stacked (tests, replays)
+        // deal from the deck exactly as stacked (tests, replays); rng_seed drives timer-event picks
+        explicit LandGameMatch(Deck deck, uint64_t rng_seed = 0);
 
         // target_card_id is declared up front. Mountain's Destroy: an opponent land;
         // Forest's Reclaim: a card in the shared graveyard; Plains' Flicker: another
@@ -84,6 +86,20 @@ class LandGameMatch {
         bool is_draw() const;
         bool concede(int player_index);     // legal at any time; the opponent wins immediately
 
+        // Timer events. Each returns false (changing nothing) unless it applies right now.
+        //  - main phase (60s): +1 AFK strike. Auto-deploys a uniformly random legal card (and
+        //    target) if the deploy is due, otherwise ends the turn. Only for the active player
+        //    while no window or choice is pending (the clock pauses then).
+        //  - priority window (10s): passes. Never a strike.
+        //  - choice prompt (15s): +1 AFK strike and a uniformly random legal answer.
+        // The third strike forfeits the match instead of acting.
+        bool main_phase_timeout(int player_index);
+        bool priority_timeout(int player_index);
+        bool choice_timeout(int player_index);
+        bool disconnect_forfeit(int player_index);      // the server saw a blown reconnect budget
+        int afk_strikes(int player_index) const;
+        static constexpr int kMaxAfkStrikes = 3;
+
         // getters for testing: deck size, hand sizes, land counts
         size_t deck_size() const;
         size_t hand_size(int player_index) const;
@@ -134,7 +150,13 @@ class LandGameMatch {
         std::vector<Action> main_phase_actions(int player_index) const;
 
         std::vector<Action> action_log_;
-        void record(Action action);   // a window or a choice is pending
+        int log_paused_{0};         // >0 while a timer event replays its own random action
+        void record(Action action);
+
+        std::mt19937_64 rng_;       // only timer events draw from it
+        int afk_strikes_[2]{0, 0};
+        size_t pick_index(size_t count);     // uniform in [0, count)
+        bool give_strike(int player_index);  // true if this was the third strike and the match ended   // a window or a choice is pending
         std::vector<uint32_t> countered_ids_;   // stack ids countered during this resolution
         std::vector<uint32_t> saved_card_ids_;  // lands saved during this resolution
         bool valid_deploy_target(int caster_index, AbilityId ability,

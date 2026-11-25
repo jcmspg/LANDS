@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -1908,6 +1909,182 @@ TEST(LandGameMatch, NoLegalActionsOnceTheGameIsOver) {
     ASSERT_TRUE(match.concede(0));
     EXPECT_TRUE(match.legal_actions(0).empty());
     EXPECT_TRUE(match.legal_actions(1).empty());
+}
+
+TEST(LandGameMatch, MainPhaseTimeoutAutoDeploysARandomLegalCard) {
+    LandGameMatch match = make_stacked_match({LandType::FOREST, LandType::PLAINS, LandType::MOUNTAIN, LandType::FOREST, LandType::PLAINS},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(10, LandType::MOUNTAIN));
+    EXPECT_EQ(match.afk_strikes(0), 0);
+
+    EXPECT_TRUE(match.main_phase_timeout(0));
+    EXPECT_EQ(match.afk_strikes(0), 1);
+    EXPECT_EQ(match.afk_strikes(1), 0);
+    EXPECT_TRUE(match.played_land_this_turn());
+    EXPECT_EQ(total_lands(match, 0), 1);
+    EXPECT_EQ(match.hand_size(0), 4);
+    EXPECT_FALSE(match.deploy_due());
+}
+
+TEST(LandGameMatch, MainPhaseTimeoutPicksEveryCardEventually) {
+    std::set<size_t> picked_positions;
+    for (uint64_t seed = 1; seed <= 300; ++seed) {
+        LandGameMatch match(seed);
+        const std::vector<Card> hand_before = match.hand(0);
+        if (!match.main_phase_timeout(0)) {
+            continue;
+        }
+        settle(match);
+        for (size_t i = 0; i < hand_before.size(); ++i) {
+            if (!hand_holds(match, 0, hand_before[i].get_identifier()) &&
+                match.land_count(0, hand_before[i].get_land_type()) > 0) {
+                picked_positions.insert(i);
+            }
+        }
+    }
+    EXPECT_EQ(picked_positions.size(), 5);                          // every hand position was chosen at some point
+}
+
+TEST(LandGameMatch, MainPhaseTimeoutChoosesAValidTarget) {
+    // P2 holds a land; P1 holds only Mountains, so a legal deploy must aim at that land
+    LandGameMatch match = make_stacked_match({LandType::FOREST, LandType::MOUNTAIN, LandType::MOUNTAIN, LandType::MOUNTAIN, LandType::MOUNTAIN},
+                                             std::vector<LandType>(6, LandType::FOREST), std::vector<LandType>(10, LandType::FOREST));
+    ASSERT_TRUE(match.play_land(0, 0));
+    ASSERT_TRUE(match.end_turn(0));
+    ASSERT_TRUE(match.play_land(1, 5));
+    ASSERT_TRUE(match.end_turn(1));
+    ASSERT_EQ(total_lands(match, 1), 1);
+
+    EXPECT_TRUE(match.main_phase_timeout(0));
+    EXPECT_EQ(total_lands(match, 1), 0);                            // the Mountain destroyed P2's only land
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);
+    EXPECT_EQ(match.graveyard_size(), 1);
+}
+
+TEST(LandGameMatch, MainPhaseTimeoutAfterTheDeployEndsTheTurn) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    ASSERT_TRUE(match.play_land(0, 0));
+
+    EXPECT_TRUE(match.main_phase_timeout(0));
+    EXPECT_EQ(match.active_player(), 1);
+    EXPECT_EQ(match.afk_strikes(0), 1);
+    EXPECT_EQ(total_lands(match, 0), 1);                            // no second deploy was forced
+}
+
+TEST(LandGameMatch, MainPhaseTimeoutOnlyAppliesToTheActivePlayersFreeClock) {
+    LandGameMatch match = make_stacked_match({LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    EXPECT_FALSE(match.main_phase_timeout(1));                      // not P2's turn
+    EXPECT_FALSE(match.main_phase_timeout(-1));
+    EXPECT_FALSE(match.main_phase_timeout(2));
+
+    ASSERT_TRUE(match.play_land(0, 0));                             // Swamp: the clock pauses for the choice
+    ASSERT_EQ(match.choice_player(), 0);
+    EXPECT_FALSE(match.main_phase_timeout(0));
+    EXPECT_EQ(match.afk_strikes(0), 0);
+    EXPECT_EQ(match.afk_strikes(1), 0);
+
+    ASSERT_TRUE(match.concede(0));
+    EXPECT_FALSE(match.main_phase_timeout(1));
+}
+
+TEST(LandGameMatch, PriorityTimeoutPassesWithoutAStrike) {
+    LandGameMatch match = make_match_where_only_p1_can_counter();
+    const Card deployed = plain_card(match, 0);
+    EXPECT_FALSE(match.priority_timeout(1));                        // no window yet
+
+    ASSERT_TRUE(match.play_land(0, deployed.get_identifier()));
+    EXPECT_FALSE(match.priority_timeout(0));                        // the pusher holds no priority
+    EXPECT_TRUE(match.priority_timeout(1));
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(match.land_count(0, deployed.get_land_type()), 1);    // it resolved
+    EXPECT_EQ(match.afk_strikes(1), 0);
+}
+
+TEST(LandGameMatch, ChoiceTimeoutMakesARandomLegalChoiceAndStrikes) {
+    LandGameMatch match = make_stacked_match({LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    EXPECT_FALSE(match.choice_timeout(0));                          // nothing pending
+    ASSERT_TRUE(match.play_land(0, 0));
+    ASSERT_EQ(match.choice_type(), ChoiceType::EXTRACT);
+
+    EXPECT_FALSE(match.choice_timeout(1));                          // not the choosing player
+    EXPECT_TRUE(match.choice_timeout(0));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.hand_size(1), 5);                               // exactly one card was extracted
+    EXPECT_EQ(match.graveyard_size(), 1);
+    EXPECT_EQ(match.afk_strikes(0), 1);
+}
+
+TEST(LandGameMatch, ChoiceTimeoutResolvesSurveilToo) {
+    LandGameMatch match = make_stacked_match({LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(5, LandType::PLAINS));
+    ASSERT_TRUE(match.pitch_land(0, 0));
+    ASSERT_EQ(match.choice_type(), ChoiceType::SURVEIL);
+
+    EXPECT_TRUE(match.choice_timeout(0));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.deck_size() + (match.graveyard_size() - 1), 5);     // the 2 peeked cards went to the bin or stayed
+    EXPECT_EQ(match.afk_strikes(0), 1);
+}
+
+TEST(LandGameMatch, ThirdAfkStrikeForfeitsInsteadOfActing) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(10, LandType::MOUNTAIN));
+    ASSERT_TRUE(match.main_phase_timeout(0));                       // strike 1: auto-deploy
+    ASSERT_TRUE(match.main_phase_timeout(0));                       // strike 2: the turn ends
+    ASSERT_TRUE(match.end_turn(1));                                 // P2 plays its turn normally
+    ASSERT_EQ(match.afk_strikes(0), 2);
+    ASSERT_FALSE(match.game_over());
+
+    EXPECT_TRUE(match.main_phase_timeout(0));                       // strike 3
+    EXPECT_EQ(match.afk_strikes(0), 3);
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.end_reason(), GameEndReason::AFK_FORFEIT);
+    EXPECT_EQ(match.winner_player(), 1);
+    EXPECT_EQ(total_lands(match, 0), 1);                            // the third timeout deployed nothing
+    EXPECT_FALSE(match.is_draw());
+}
+
+TEST(LandGameMatch, DisconnectForfeitEndsTheMatch) {
+    LandGameMatch match(12345);
+    EXPECT_FALSE(match.disconnect_forfeit(-1));
+    EXPECT_FALSE(match.disconnect_forfeit(2));
+
+    EXPECT_TRUE(match.disconnect_forfeit(1));                       // the player who is not on move may drop too
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.end_reason(), GameEndReason::DISCONNECT_FORFEIT);
+    EXPECT_EQ(match.winner_player(), 0);
+    EXPECT_FALSE(match.disconnect_forfeit(0));
+}
+
+TEST(LandGameMatch, AfkStrikesRejectBadPlayerIndex) {
+    LandGameMatch match(12345);
+    EXPECT_THROW(match.afk_strikes(-1), std::out_of_range);
+    EXPECT_THROW(match.afk_strikes(2), std::out_of_range);
+}
+
+TEST(LandGameMatch, TimerEventsAreLoggedAsEventsNotAsTheirActions) {
+    LandGameMatch match = make_stacked_match({LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    ASSERT_TRUE(match.play_land(0, 0));                             // Extract pending
+    ASSERT_TRUE(match.choice_timeout(0));
+
+    ASSERT_EQ(match.action_log().size(), 2);
+    EXPECT_EQ(match.action_log()[1], (Action{ActionType::CHOICE_TIMEOUT, 0, 0, std::nullopt, std::nullopt, {}, {}}));
+}
+
+TEST(LandGameMatch, TimerPicksAreDeterministicPerSeed) {
+    LandGameMatch a(777);
+    LandGameMatch b(777);
+    ASSERT_TRUE(a.main_phase_timeout(0));
+    ASSERT_TRUE(b.main_phase_timeout(0));
+    EXPECT_EQ(ids_of(a.hand(0)), ids_of(b.hand(0)));
+    EXPECT_EQ(ids_of(a.battlefield(0)), ids_of(b.battlefield(0)));
 }
 
 } // namespace lands
