@@ -65,6 +65,20 @@ TEST(LandGameMatch, PlayLand) {
     
 }
 
+TEST(LandGameMatch, PlayLandMovesExactlyOneCardToBoard) {
+    LandGameMatch match(12345);
+
+    EXPECT_TRUE(match.play_land(0, 0));
+    EXPECT_EQ(match.hand_size(0), 4);           // 5 - 1, not 5 - 2
+    EXPECT_EQ(match.hand_size(1), 6);
+
+    size_t total_lands = 0;
+    for (uint8_t t = 0; t < static_cast<uint8_t>(LandType::NUM_LAND_TYPES); ++t) {
+        total_lands += match.land_count(0, static_cast<LandType>(t));
+    }
+    EXPECT_EQ(total_lands, 1);                  // added once, not twice
+}
+
 TEST(LandGameMatch, GettersRejectBadPlayerIndex) {
     LandGameMatch match(12345);
     EXPECT_THROW(match.hand_size(-1), std::out_of_range);

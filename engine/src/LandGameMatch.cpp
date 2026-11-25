@@ -64,9 +64,6 @@ bool LandGameMatch::play_land(int player_index, size_t hand_index) {
     if (played_land_this_turn()) {
         return false;
     }
-    if (!players_[player_index].play_land(hand_index)) {
-        return false;
-    }
     Card card = players_[player_index].take_from_hand(hand_index);
 
     const LandDefinition& def = get(card.get_land_type());
