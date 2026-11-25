@@ -6,6 +6,8 @@
 #include "lands/Graveyard.hpp"
 #include "lands/ActionStack.hpp"
 
+#include <optional>
+
 namespace lands {
 
 class LandGameMatch {
@@ -13,6 +15,12 @@ class LandGameMatch {
         explicit LandGameMatch(uint64_t seed);   // shuffle + deal
 
         bool play_land(int player_index, uint32_t card_id);
+
+        // Main-phase pitch (Mountain / Swamp / Forest), max 1 per turn.
+        // Rummage needs extra_card_id (the card discarded as cost); Ramp must
+        // not be given one. Illegal pitches return false and change nothing.
+        bool pitch_land(int player_index, uint32_t card_id,
+                        std::optional<uint32_t> extra_card_id = std::nullopt);
 
         WinCondition winner() const; // none until someone wins
 
@@ -27,6 +35,7 @@ class LandGameMatch {
         int active_player() const;
         int turn_number() const;
         bool played_land_this_turn() const;
+        bool pitched_this_turn() const;
 
         size_t graveyard_size() const;
 
@@ -44,6 +53,8 @@ class LandGameMatch {
         int active_player_{0};
         int turn_number_{1};
         bool played_land_{false}; // false until a land is played
+        bool pitched_this_turn_{false}; // false until a main-phase pitch resolves
+        bool ramp_available_{false};    // set by a resolved Ramp, spent on the extra deploy
         Graveyard graveyard_;
 
         ActionStack stack_;

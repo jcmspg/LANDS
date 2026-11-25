@@ -13,7 +13,9 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Win check (Domain / Mono) after each resolution | done | §3.3 |
 | Shared graveyard | exists, **nothing writes to it yet** | §3.1 |
 | Deploy ETBs (Flicker, Draw, Extract, Destroy, Reclaim) | **not implemented**; `AbilityId` is stored on the stack item only | §3.5 |
-| Pitch abilities | **not implemented** | §3.4, §3.5 |
+| Main-phase pitch: Forest Ramp, Mountain Rummage (`pitch_land`, 1/turn, goes through the stack) | done | §3.2, §3.4, §3.5 |
+| Ramped deploy enters vanilla (`AbilityId::NONE`) | done, but **not observable in tests yet** because no ETB resolves; add an assertion when the first deploy ETB lands | §3.2 |
+| Swamp Surveil, Island Counter, Plains Save | **not implemented** (`pitch_land` returns false for them) | §3.5 |
 | Priority windows, Counter, Save | **not implemented** | §4 |
 | Choice prompts (Extract, Surveil, Flicker targets) | **not implemented** | §8.6 |
 | Mandatory deploy / empty-hand end / turn cap / tiebreak | **not implemented** | §3.6 |
@@ -31,7 +33,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 
 ## Roadmap (one slice = one reviewable commit series)
 
-1. **Main-phase pitches without choices:** Forest Ramp, Mountain Rummage. 1 pitch per turn, ramped deploy enters vanilla, pitched card goes to the graveyard.
+1. ~~**Main-phase pitches without choices:** Forest Ramp, Mountain Rummage.~~ Done.
 2. **Deploy ETBs without choices:** Island Draw; Mountain Destroy / Forest Reclaim / Swamp Extract once a target-choice mechanism exists (see 5).
 3. **Stack grammar + priority window:** opponent gets one window after each push; pass resolves the whole stack top-to-bottom; auto-pass when the opponent has no Island and no applicable Plains (§4.3).
 4. **Reactive pitches:** Island Counter (Memory Lapse semantics, counter wars), Plains Save (fizzle on target).

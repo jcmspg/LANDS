@@ -3,6 +3,7 @@
 #include "lands/WinEvaluator.hpp"
 
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace lands {
@@ -66,9 +67,11 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
     if (!players_[player_index].has_card(card_id)) {
         return false;
     }
-    if (played_land_this_turn()) {
+    // a second deploy is only legal if a Ramp pitch resolved this turn
+    if (played_land_this_turn() && !ramp_available_) {
         return false;
     }
+    const bool ramped = played_land_this_turn();
     Card card = players_[player_index].take_from_hand(card_id);
 
     const LandDefinition& def = get(card.get_land_type());
@@ -78,8 +81,12 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
         player_index,
         PlayMode::DEPLOY,
         card,
-        def.deploy_ability
+        ramped ? AbilityId::NONE : def.deploy_ability  // ramped deploys enter vanilla
     };
+
+    if (ramped) {
+        ramp_available_ = false;
+    }
 
     stack_.push(std::move(item));
     resolve_top_action();
@@ -88,6 +95,66 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
 
     return true;
     
+}
+
+bool LandGameMatch::pitch_land(int player_index, uint32_t card_id,
+                               std::optional<uint32_t> extra_card_id) {
+    if (player_index < 0 || player_index >= 2) {
+        return false;
+    }
+    if (player_index != active_player_) {
+        return false;
+    }
+    if (pitched_this_turn_) {
+        return false;
+    }
+    PlayerState& player = players_[player_index];
+    if (!player.has_card(card_id)) {
+        return false;
+    }
+
+    const auto& hand = player.hand();
+    const auto it = std::find_if(hand.begin(), hand.end(), [card_id](const Card& card) {
+        return card.get_identifier() == card_id;
+    });
+    const LandDefinition& def = get(it->get_land_type());
+    if (def.pitch_timing != PitchTiming::MainPhase) {
+        return false;
+    }
+    // Surveil needs a choice prompt, which does not exist yet
+    if (def.pitch_ability != AbilityId::RAMP && def.pitch_ability != AbilityId::RUMMAGE) {
+        return false;
+    }
+
+    const bool needs_extra = def.pitch_ability == AbilityId::RUMMAGE;
+    if (needs_extra != extra_card_id.has_value()) {
+        return false;
+    }
+    if (extra_card_id.has_value() &&
+        (*extra_card_id == card_id || !player.has_card(*extra_card_id))) {
+        return false;
+    }
+
+    // all checks passed: from here on the pitch is committed
+    Card card = player.take_from_hand(card_id);
+    if (extra_card_id.has_value()) {
+        graveyard_.add(player.take_from_hand(*extra_card_id));
+    }
+
+    StackItem item {
+        next_stack_id_++,
+        player_index,
+        PlayMode::PITCH,
+        card,
+        def.pitch_ability
+    };
+
+    stack_.push(std::move(item));
+    resolve_top_action();
+
+    pitched_this_turn_ = true;
+
+    return true;
 }
 
 void LandGameMatch::begin_turn() {
@@ -108,12 +175,18 @@ bool LandGameMatch::end_turn(int player_index) {
         return false;
     }
     played_land_ = false;
+    pitched_this_turn_ = false;
+    ramp_available_ = false;
     begin_turn();
     return true;
 }
 
 bool LandGameMatch::played_land_this_turn() const {
     return played_land_;
+}
+
+bool LandGameMatch::pitched_this_turn() const {
+    return pitched_this_turn_;
 }
 
 int LandGameMatch::active_player() const {
@@ -149,7 +222,24 @@ void LandGameMatch::resolve_top_action() {
         }
     }
 
-    //pitch ability -> ignore for now
+    if (item.mode == PlayMode::PITCH) {
+        // pitched cards never touch the battlefield
+        graveyard_.add(item.card);
+
+        switch (item.ability) {
+            case AbilityId::RAMP:
+                ramp_available_ = true;
+                break;
+            case AbilityId::RUMMAGE:
+                // draw 2, or as many as the shared library still has
+                for (int i = 0; i < 2 && deck_.deck_size() > 0; ++i) {
+                    players_[item.caster_id].draw_from(deck_);
+                }
+                break;
+            default:
+                break;  // Save / Counter / Surveil are not wired up yet
+        }
+    }
 }
 
 } // namespace lands
