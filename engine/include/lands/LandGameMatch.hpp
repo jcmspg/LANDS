@@ -15,12 +15,19 @@ class LandGameMatch {
     public:
         explicit LandGameMatch(uint64_t seed);   // shuffle + deal
 
-        bool play_land(int player_index, uint32_t card_id);
+        // target_card_id: Mountain's Destroy target (an opponent land). It is required
+        // exactly when the opponent controls a land, and rejected otherwise.
+        bool play_land(int player_index, uint32_t card_id,
+                       std::optional<uint32_t> target_card_id = std::nullopt);
 
         // Reactive Island Counter: pitch an Island plus one other card from hand to
         // counter any item on the stack. Only the player holding priority may cast it.
         bool cast_counter(int player_index, uint32_t island_card_id,
                           uint32_t extra_card_id, uint32_t target_stack_id);
+
+        // Reactive Plains Save: pitch a Plains to make every stack item that targets
+        // `land_card_id` (a land the caster controls) fizzle.
+        bool cast_save(int player_index, uint32_t plains_card_id, uint32_t land_card_id);
 
         // Decline to respond; the whole stack then resolves top to bottom.
         bool pass_priority(int player_index);
@@ -42,6 +49,7 @@ class LandGameMatch {
         size_t hand_size(int player_index) const;
         size_t land_count(int player_index, LandType land_type) const;
         const std::vector<Card>& hand(int player_index) const;
+        const std::vector<Card>& battlefield(int player_index) const;
 
 
         bool end_turn(int player_index);
@@ -73,6 +81,9 @@ class LandGameMatch {
         // priority window
         int priority_player_{-1};
         std::vector<uint32_t> countered_ids_;   // stack ids countered during this resolution
+        std::vector<uint32_t> saved_card_ids_;  // lands saved during this resolution
+        bool valid_deploy_target(int caster_index, AbilityId ability,
+                                 const std::optional<uint32_t>& target_card_id) const;
         bool can_respond(int player_index) const;
         void open_priority_window(int pusher_index);
         void resolve_stack();

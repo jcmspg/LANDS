@@ -81,4 +81,38 @@ TEST(PlayerState, TakeFromHandByCardId) {
     EXPECT_THROW(player_state.take_from_hand(7), std::out_of_range);
 }
 
+TEST(PlayerState, PlayLandAddsCardToBattlefield) {
+    PlayerState player_state;
+    Deck deck;
+    deck.put_on_top(Card(LandType::FOREST, 5));
+
+    player_state.draw_from(deck);
+    EXPECT_TRUE(player_state.battlefield().empty());
+    EXPECT_TRUE(player_state.play_land(5));
+    ASSERT_EQ(player_state.battlefield().size(), 1);
+    EXPECT_EQ(player_state.battlefield()[0], Card(LandType::FOREST, 5));
+    EXPECT_TRUE(player_state.has_on_board(5));
+    EXPECT_FALSE(player_state.has_on_board(6));
+}
+
+TEST(PlayerState, AddToBoardTracksCardAndCount) {
+    PlayerState player_state;
+    player_state.add_to_board(Card(LandType::MOUNTAIN, 9));
+    EXPECT_TRUE(player_state.has_on_board(9));
+    EXPECT_EQ(player_state.land_counts(), (std::array<uint8_t, 5>{0, 0, 0, 1, 0}));
+    EXPECT_EQ(player_state.hand_size(), 0);
+}
+
+TEST(PlayerState, RemoveFromBoardByCardId) {
+    PlayerState player_state;
+    player_state.add_to_board(Card(LandType::MOUNTAIN, 9));
+    player_state.add_to_board(Card(LandType::MOUNTAIN, 10));
+
+    EXPECT_EQ(player_state.remove_from_board(9), Card(LandType::MOUNTAIN, 9));
+    EXPECT_FALSE(player_state.has_on_board(9));
+    EXPECT_TRUE(player_state.has_on_board(10));
+    EXPECT_EQ(player_state.land_counts(), (std::array<uint8_t, 5>{0, 0, 0, 1, 0}));
+    EXPECT_THROW(player_state.remove_from_board(9), std::out_of_range);
+}
+
 } // namespace lands

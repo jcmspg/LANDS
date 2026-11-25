@@ -31,6 +31,12 @@ bool ActionStack::contains(uint32_t stack_id) const {
     });
 }
 
+bool ActionStack::targets_card(uint32_t card_id) const {
+    return std::any_of(items_.begin(), items_.end(), [card_id](const StackItem& item) {
+        return item.target_card_id.has_value() && *item.target_card_id == card_id;
+    });
+}
+
 bool ActionStack::empty() const {
     return items_.empty();
 }

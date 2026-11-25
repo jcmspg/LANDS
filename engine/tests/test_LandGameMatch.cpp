@@ -96,6 +96,59 @@ void settle(LandGameMatch& match) {
     }
 }
 
+// Scenario for Destroy / Save: P0 deployed a land and P1 deployed one (`battlefield(1)[0]`),
+// and it is now P0's turn 2 with a Mountain in hand. Neither player starts with an Island
+// unless `p0_island` is set (P0 only); P1 starts with a Plains iff `p1_plains`.
+// `keep` lists land types P0 must still hold afterwards (Mountain is always kept).
+LandGameMatch make_destroy_scenario(bool p1_plains, bool p0_island,
+                                    const std::vector<LandType>& keep = {}) {
+    auto not_kept = [&](const Card& card) {
+        const LandType land_type = card.get_land_type();
+        return land_type != LandType::MOUNTAIN && land_type != LandType::ISLAND &&
+               std::find(keep.begin(), keep.end(), land_type) == keep.end();
+    };
+    for (uint64_t seed = 1; seed < 20000; ++seed) {
+        LandGameMatch match(seed);
+        if (!find_in_hand(match, 0, LandType::MOUNTAIN).has_value() ||
+            find_in_hand(match, 0, LandType::ISLAND).has_value() != p0_island ||
+            find_in_hand(match, 1, LandType::ISLAND).has_value() ||
+            find_in_hand(match, 1, LandType::PLAINS).has_value() != p1_plains) {
+            continue;
+        }
+        bool kept_all = true;
+        for (LandType land_type : keep) {
+            kept_all = kept_all && find_in_hand(match, 0, land_type).has_value();
+        }
+        const auto& p0_hand = match.hand(0);
+        const auto& p1_hand = match.hand(1);
+        const auto p0_deploy = std::find_if(p0_hand.begin(), p0_hand.end(), not_kept);
+        const auto p1_deploy = std::find_if(p1_hand.begin(), p1_hand.end(), [](const Card& card) {
+            return card.get_land_type() != LandType::MOUNTAIN && card.get_land_type() != LandType::PLAINS;
+        });
+        if (!kept_all || p0_deploy == p0_hand.end() || p1_deploy == p1_hand.end()) {
+            continue;
+        }
+
+        const uint32_t p0_id = p0_deploy->get_identifier();
+        const uint32_t p1_id = p1_deploy->get_identifier();
+        if (!match.play_land(0, p0_id)) { continue; }
+        settle(match);
+        if (!match.end_turn(0) || !match.play_land(1, p1_id)) { continue; }
+        settle(match);
+        if (!match.end_turn(1)) { continue; }
+
+        // P0 drew a card: it must not have changed the scenario
+        if (find_in_hand(match, 0, LandType::ISLAND).has_value() != p0_island ||
+            !find_in_hand(match, 0, LandType::MOUNTAIN).has_value() ||
+            match.hand_size(0) < 4) {
+            continue;
+        }
+        return match;
+    }
+    ADD_FAILURE() << "no seed produced the Destroy scenario";
+    return LandGameMatch(0);
+}
+
 size_t total_lands(const LandGameMatch& match, int player_index) {
     size_t total = 0;
     for (uint8_t t = 0; t < static_cast<uint8_t>(LandType::NUM_LAND_TYPES); ++t) {
@@ -664,6 +717,147 @@ TEST(LandGameMatch, CounterRejectionsLeaveStateUntouched) {
     EXPECT_EQ(match.stack_size(), 1);
     EXPECT_EQ(match.hand_size(1), 6);
     EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, DestroyRemovesTargetedOpponentLand) {
+    LandGameMatch match = make_destroy_scenario(false, false);
+    const Card target = match.battlefield(1)[0];
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+    const size_t hand_before = match.hand_size(0);
+
+    EXPECT_TRUE(match.play_land(0, mountain, target.get_identifier()));
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_TRUE(match.battlefield(1).empty());
+    EXPECT_EQ(total_lands(match, 1), 0);
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);          // the Mountain still enters
+    EXPECT_EQ(match.hand_size(0), hand_before - 1);
+    ASSERT_EQ(match.graveyard_size(), 1);                           // destroyed lands go to the shared graveyard
+}
+
+TEST(LandGameMatch, DestroyRequiresValidOpponentTarget) {
+    LandGameMatch match = make_destroy_scenario(false, false);
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+    const uint32_t own_land = match.battlefield(0)[0].get_identifier();
+    const size_t hand_before = match.hand_size(0);
+
+    EXPECT_FALSE(match.play_land(0, mountain));                     // a target exists, so one is required
+    EXPECT_FALSE(match.play_land(0, mountain, own_land));           // not an opponent land
+    EXPECT_FALSE(match.play_land(0, mountain, 9999));               // no such card
+    EXPECT_FALSE(match.play_land(0, mountain, mountain));           // in hand, not on the battlefield
+    EXPECT_FALSE(match.played_land_this_turn());
+    EXPECT_EQ(match.hand_size(0), hand_before);
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(total_lands(match, 1), 1);
+    EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, DestroyEntersVanillaWhenOpponentHasNoLands) {
+    LandGameMatch match = make_match_with(0, {LandType::MOUNTAIN});
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+
+    EXPECT_FALSE(match.play_land(0, mountain, 9999));               // nothing to target
+    EXPECT_TRUE(match.play_land(0, mountain));
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);
+    EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, LandsWithoutTargetsRejectATarget) {
+    LandGameMatch match = make_destroy_scenario(false, false, {LandType::FOREST});
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t target = match.battlefield(1)[0].get_identifier();
+
+    EXPECT_FALSE(match.play_land(0, forest, target));
+    EXPECT_TRUE(match.play_land(0, forest));
+    EXPECT_EQ(total_lands(match, 1), 1);                            // nothing was destroyed
+}
+
+TEST(LandGameMatch, RampedMountainEntersVanilla) {
+    LandGameMatch match = make_destroy_scenario(false, false, {LandType::FOREST});
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+    const uint32_t target = match.battlefield(1)[0].get_identifier();
+
+    ASSERT_TRUE(match.pitch_land(0, forest));
+    ASSERT_TRUE(match.play_land(0, first_card_not_of_type(match, 0, LandType::MOUNTAIN)));
+    EXPECT_FALSE(match.play_land(0, mountain, target));             // vanilla: no target allowed
+    EXPECT_TRUE(match.play_land(0, mountain));
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);
+    EXPECT_EQ(total_lands(match, 1), 1);                            // the ramped Mountain destroyed nothing
+}
+
+TEST(LandGameMatch, SaveOpensWindowOnlyWhenOpponentLandIsTargeted) {
+    LandGameMatch match = make_destroy_scenario(true, false, {LandType::FOREST});
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+
+    EXPECT_TRUE(match.play_land(0, forest));                        // targets nothing: auto-pass
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_TRUE(match.end_turn(0));
+    EXPECT_TRUE(match.end_turn(1));
+
+    LandGameMatch targeted = make_destroy_scenario(true, false);
+    EXPECT_TRUE(targeted.play_land(0, *find_in_hand(targeted, 0, LandType::MOUNTAIN),
+                                   targeted.battlefield(1)[0].get_identifier()));
+    EXPECT_EQ(targeted.priority_player(), 1);                       // P2 holds a Plains and is a target
+    EXPECT_EQ(targeted.stack_size(), 1);
+    EXPECT_EQ(total_lands(targeted, 1), 1);                         // still unresolved
+}
+
+TEST(LandGameMatch, SaveMakesDestroyFizzleButMountainStillEnters) {
+    LandGameMatch match = make_destroy_scenario(true, false);
+    const Card saved_land = match.battlefield(1)[0];
+    const uint32_t plains = *find_in_hand(match, 1, LandType::PLAINS);
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::MOUNTAIN), saved_land.get_identifier()));
+    ASSERT_EQ(match.priority_player(), 1);
+    const size_t p1_hand_before = match.hand_size(1);
+
+    EXPECT_TRUE(match.cast_save(1, plains, saved_land.get_identifier()));
+    EXPECT_EQ(match.priority_player(), -1);                         // P0 holds no counter: auto-pass
+    EXPECT_EQ(match.stack_size(), 0);
+    ASSERT_EQ(match.battlefield(1).size(), 1);
+    EXPECT_EQ(match.battlefield(1)[0], saved_land);                 // survived
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);          // saved against, not countered
+    EXPECT_EQ(match.hand_size(1), p1_hand_before - 1);
+    EXPECT_EQ(match.graveyard_size(), 1);                           // just the Plains
+}
+
+TEST(LandGameMatch, SaveRejectionsLeaveStateUntouched) {
+    LandGameMatch match = make_destroy_scenario(true, false);
+    const Card target = match.battlefield(1)[0];
+    const uint32_t plains = *find_in_hand(match, 1, LandType::PLAINS);
+    const uint32_t not_plains = first_card_not_of_type(match, 1, LandType::PLAINS);
+    const uint32_t own_land = match.battlefield(0)[0].get_identifier();
+
+    EXPECT_FALSE(match.cast_save(1, plains, target.get_identifier()));  // no window open
+
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::MOUNTAIN), target.get_identifier()));
+    EXPECT_FALSE(match.cast_save(0, plains, target.get_identifier()));  // not the priority holder
+    EXPECT_FALSE(match.cast_save(-1, plains, target.get_identifier()));
+    EXPECT_FALSE(match.cast_save(1, not_plains, target.get_identifier()));  // not a Plains
+    EXPECT_FALSE(match.cast_save(1, 9999, target.get_identifier()));    // no such card
+    EXPECT_FALSE(match.cast_save(1, plains, own_land));                 // opponent's land, and untargeted
+    EXPECT_FALSE(match.cast_save(1, plains, 9999));                     // no such land
+
+    EXPECT_EQ(match.priority_player(), 1);
+    EXPECT_EQ(match.stack_size(), 1);
+    EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, CounteredSaveLetsDestroyResolve) {
+    LandGameMatch match = make_destroy_scenario(true, true);
+    const Card target = match.battlefield(1)[0];
+    const uint32_t plains = *find_in_hand(match, 1, LandType::PLAINS);
+    const uint32_t island = *find_in_hand(match, 0, LandType::ISLAND);
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::MOUNTAIN), target.get_identifier()));
+    ASSERT_EQ(match.priority_player(), 1);
+    ASSERT_TRUE(match.cast_save(1, plains, target.get_identifier()));
+    ASSERT_EQ(match.priority_player(), 0);                          // P0 can answer with its Island
+
+    EXPECT_TRUE(match.cast_counter(0, island, first_card_other_than(match, 0, island),
+                                   match.stack_top().stack_id));    // counter the Save
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_TRUE(match.battlefield(1).empty());                      // the Save never applied
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);
+    EXPECT_EQ(match.graveyard_size(), 4);                           // Plains, Island, cost card, destroyed land
 }
 
 } // namespace lands

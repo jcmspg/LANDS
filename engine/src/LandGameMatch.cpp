@@ -64,7 +64,28 @@ const std::vector<Card>& LandGameMatch::hand(int player_index) const {
     return players_[player_index].hand();
 }
 
-bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
+const std::vector<Card>& LandGameMatch::battlefield(int player_index) const {
+    require_player_index(player_index);
+    return players_[player_index].battlefield();
+}
+
+bool LandGameMatch::valid_deploy_target(int caster_index, AbilityId ability,
+                                        const std::optional<uint32_t>& target_card_id) const {
+    switch (ability) {
+        case AbilityId::DESTROY: {
+            const PlayerState& opponent = players_[1 - caster_index];
+            if (opponent.battlefield().empty()) {
+                return !target_card_id.has_value();     // no land to hit: enters vanilla
+            }
+            return target_card_id.has_value() && opponent.has_on_board(*target_card_id);
+        }
+        default:
+            return !target_card_id.has_value();
+    }
+}
+
+bool LandGameMatch::play_land(int player_index, uint32_t card_id,
+                              std::optional<uint32_t> target_card_id) {
     if (player_index < 0 || player_index >= 2) {
         return false;
     }
@@ -82,16 +103,22 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
         return false;
     }
     const bool ramped = played_land_this_turn();
+    const LandDefinition& def =
+        get(find_card(players_[player_index].hand(), card_id)->get_land_type());
+    const AbilityId ability = ramped ? AbilityId::NONE : def.deploy_ability;  // ramped deploys enter vanilla
+    if (!valid_deploy_target(player_index, ability, target_card_id)) {
+        return false;
+    }
     Card card = players_[player_index].take_from_hand(card_id);
-
-    const LandDefinition& def = get(card.get_land_type());
 
     StackItem item {
         next_stack_id_++,
         player_index,
         PlayMode::DEPLOY,
         card,
-        ramped ? AbilityId::NONE : def.deploy_ability  // ramped deploys enter vanilla
+        ability,
+        0,
+        target_card_id
     };
 
     if (ramped) {
@@ -208,6 +235,39 @@ bool LandGameMatch::cast_counter(int player_index, uint32_t island_card_id,
     return true;
 }
 
+bool LandGameMatch::cast_save(int player_index, uint32_t plains_card_id, uint32_t land_card_id) {
+    if (player_index < 0 || player_index >= 2) {
+        return false;
+    }
+    if (player_index != priority_player_) {
+        return false;
+    }
+    PlayerState& player = players_[player_index];
+    const Card* plains = find_card(player.hand(), plains_card_id);
+    if (plains == nullptr || get(plains->get_land_type()).pitch_ability != AbilityId::SAVE) {
+        return false;
+    }
+    // must be a land the caster controls that some stack item is targeting
+    if (!player.has_on_board(land_card_id) || !stack_.targets_card(land_card_id)) {
+        return false;
+    }
+
+    StackItem item {
+        next_stack_id_++,
+        player_index,
+        PlayMode::PITCH,
+        player.take_from_hand(plains_card_id),
+        AbilityId::SAVE,
+        0,
+        land_card_id
+    };
+
+    stack_.push(std::move(item));
+    open_priority_window(player_index);
+
+    return true;
+}
+
 bool LandGameMatch::pass_priority(int player_index) {
     if (player_index < 0 || player_index >= 2) {
         return false;
@@ -229,13 +289,24 @@ const StackItem& LandGameMatch::stack_top() const {
 }
 
 bool LandGameMatch::can_respond(int player_index) const {
-    // Counter costs an Island plus one other card, so Island + 1 is the minimum hand
     const PlayerState& player = players_[player_index];
-    if (player.hand_size() < 2) {
-        return false;
+
+    // Counter costs an Island plus one other card, so Island + 1 is the minimum hand
+    const bool can_counter = player.hand_size() >= 2 &&
+        std::any_of(player.hand().begin(), player.hand().end(), [](const Card& card) {
+            return get(card.get_land_type()).pitch_ability == AbilityId::COUNTER;
+        });
+    if (can_counter) {
+        return true;
     }
-    return std::any_of(player.hand().begin(), player.hand().end(), [](const Card& card) {
-        return get(card.get_land_type()).pitch_ability == AbilityId::COUNTER;
+
+    // Save costs one Plains and needs a stack item aiming at one of the player's lands
+    const bool holds_plains = std::any_of(player.hand().begin(), player.hand().end(), [](const Card& card) {
+        return get(card.get_land_type()).pitch_ability == AbilityId::SAVE;
+    });
+    return holds_plains && std::any_of(player.battlefield().begin(), player.battlefield().end(),
+                                       [this](const Card& land) {
+        return stack_.targets_card(land.get_identifier());
     });
 }
 
@@ -321,7 +392,7 @@ void LandGameMatch::resolve_top_action() {
             // Memory Lapse: the countered land goes on top of the shared library
             deck_.put_on_top(item.card);
         } else {
-            players_[item.caster_id].add_to_board(item.card.get_land_type());
+            players_[item.caster_id].add_to_board(item.card);
 
             // ETB (GDD §3.5); a ramped deploy carries AbilityId::NONE and enters vanilla
             switch (item.ability) {
@@ -331,8 +402,21 @@ void LandGameMatch::resolve_top_action() {
                         players_[item.caster_id].draw_from(deck_);
                     }
                     break;
+                case AbilityId::DESTROY: {
+                    // fizzles if the target was saved or already left the battlefield;
+                    // the Mountain itself still enters either way
+                    PlayerState& opponent = players_[1 - item.caster_id];
+                    const bool saved = item.target_card_id.has_value() &&
+                        std::find(saved_card_ids_.begin(), saved_card_ids_.end(),
+                                  *item.target_card_id) != saved_card_ids_.end();
+                    if (item.target_card_id.has_value() && !saved &&
+                        opponent.has_on_board(*item.target_card_id)) {
+                        graveyard_.add(opponent.remove_from_board(*item.target_card_id));
+                    }
+                    break;
+                }
                 default:
-                    break;  // Flicker / Destroy / Extract / Reclaim are not wired up yet
+                    break;  // Flicker / Extract / Reclaim are not wired up yet
             }
 
             WinEvaluator eval;
@@ -359,14 +443,19 @@ void LandGameMatch::resolve_top_action() {
                 case AbilityId::COUNTER:
                     countered_ids_.push_back(item.target_stack_id);
                     break;
+                case AbilityId::SAVE:
+                    // everything below this item on the stack that targets the land fizzles
+                    saved_card_ids_.push_back(*item.target_card_id);
+                    break;
                 default:
-                    break;  // Save / Surveil are not wired up yet
+                    break;  // Surveil is not wired up yet
             }
         }
     }
 
     if (stack_.empty()) {
         countered_ids_.clear();
+        saved_card_ids_.clear();
     }
 }
 
