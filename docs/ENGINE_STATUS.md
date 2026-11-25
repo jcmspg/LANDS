@@ -30,6 +30,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Timer events (`main_phase_timeout`, `priority_timeout`, `choice_timeout`): auto-deploy a uniformly random legal card + target, auto-pass, uniformly random legal choice; the match-owned seeded RNG makes them replay exactly and only the event is logged | done | §3.2, §4.4, §8.6 |
 | AFK strikes (`afk_strikes`, 3 = `AFK_FORFEIT`); `disconnect_forfeit` for the server's blown-grace case | done | §3.6 |
 | The clocks themselves (60s / 10s / 15s, disconnect grace) | not an engine concern: the server's event loop owns them (§6.3) and calls the timer events above | §4.4 |
+| `MatchConfig` first-player compensation packages (GDD §3.1 balance watchpoint) | done | §3.1, §10 |
 | `RandomBot` (uniform legal play; timer and stalling profiles) and `lands_sim` (`--matches`, `--seed`, `--timer-percent`, `--idle-percent`); `state_digest()` | done | §10 |
 | `Action` type, `apply`, append-only `action_log()`, `replay(seed, log)`; rejected actions are never logged | done | §6.3 |
 | `legal_actions(player)`: exactly the set of actions the engine accepts (concede aside), checked against a brute-force oracle over random games; `deploy_due()` | done | §10 |
@@ -66,7 +67,8 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 9. ~~**Timer events and the random-legal-action rule** (builds on `legal_actions`):~~ Done. engine-side effects of timeouts (auto-deploy a uniformly random legal card, random legal choice, auto-pass), driven by a match-owned seeded RNG so they replay; AFK strike accounting and the 3-strike forfeit.
 10. ~~**Action log + replay.**~~ Done (slice 9, delivered before the timer events).
 11. ~~**Simulation harness:**~~ Done. `lands_sim` plays N random-bot matches (default 10,000, ~2s), checks termination, replay (`state_digest`) and reports outcomes and action coverage; ctest runs a default and a stalling profile.
-12. **Compensation configurations (GDD §3.1 balance note, Phase 1 watchpoints):** a `MatchConfig` for (a) P1 draw-skip only, (b) P2 6th card only, (c) both (today's default), and `lands_sim` reporting P1 / P2 win rates for each.
-13. **Smarter bots** than uniform random, so the win-rate numbers mean something (random-bot rates only show the engine works).
+12. ~~**Compensation configurations.**~~ Done: `MatchConfig` (`draw_skip_only`, `sixth_card_only`, `both` = the default), accepted by both constructors and `replay`; `lands_sim --config all` (default) compares the three.
+13. **Smarter bots** than uniform random, so the win-rate numbers mean something. Random bots only show the engine is sound; with them the shipped "both" package favors P2 (~55%) while either single rule is near even, but that is not balance evidence yet.
+14. **Phase 1 close-out review:** re-read the GDD end to end against the engine, then start Phase 2 (the WebSocket server).
 
 Order is a recommendation; reorder if a later slice unblocks something earlier.

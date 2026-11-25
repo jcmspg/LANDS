@@ -13,7 +13,7 @@ This repository is a learning project: a bit-by-bit build of a rules engine, net
 | Area | State |
 | :--- | :--- |
 | **Game design** | Finalized ruleset in the GDD (v2.1.0) |
-| **Phase 1 — C++ rules engine** | **Nearly done** — full ruleset, action log / replay and a bot simulation harness under `engine/`; the P1/P2 compensation-config comparison is the main thing left (see `docs/ENGINE_STATUS.md`) |
+| **Phase 1 — C++ rules engine** | **Nearly done** — full ruleset, action log / replay and a bot simulation harness under `engine/`; what is left is smarter bots to make the balance numbers meaningful (see `docs/ENGINE_STATUS.md`) |
 | **Phases 2–5** (server, Godot client, auth, deploy) | Planned — not started |
 
 ### What’s implemented now (`engine/`)
@@ -26,7 +26,7 @@ CMake + GoogleTest. The rules are complete per the GDD; `docs/ENGINE_STATUS.md` 
 - **Match flow** — turns, mandatory-deploy bookkeeping, Domain / Mono wins, concede, deploy lock, turn-50 cap and tiebreak
 - **Determinism** — every accepted `Action` goes in an append-only log; `replay(seed, log)` reproduces a match bit-for-bit (`state_digest()` checks it)
 - **Timers & strikes** — main-phase / priority / choice timeout events, AFK strikes and forfeits (the clocks themselves belong to the future server)
-- **Bots** — `legal_actions()` plus a `RandomBot`, driving `lands_sim`, a harness that plays thousands of matches and checks termination and replay (`./engine/build/lands_sim --matches 10000`)
+- **Bots** — `legal_actions()` plus a `RandomBot`, driving `lands_sim`, a harness that plays thousands of matches, checks termination and replay, and compares the three first-player compensation packages (`./engine/build/lands_sim --matches 10000`)
 
 ---
 

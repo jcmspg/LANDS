@@ -8,6 +8,7 @@
 #include "lands/ActionStack.hpp"
 #include "lands/Choice.hpp"
 #include "lands/GameEnd.hpp"
+#include "lands/MatchConfig.hpp"
 
 #include <optional>
 #include <random>
@@ -17,9 +18,9 @@ namespace lands {
 
 class LandGameMatch {
     public:
-        explicit LandGameMatch(uint64_t seed);   // shuffle + deal
+        explicit LandGameMatch(uint64_t seed, MatchConfig config = MatchConfig{});   // shuffle + deal
         // deal from the deck exactly as stacked (tests, replays); rng_seed drives timer-event picks
-        explicit LandGameMatch(Deck deck, uint64_t rng_seed = 0);
+        explicit LandGameMatch(Deck deck, uint64_t rng_seed = 0, MatchConfig config = MatchConfig{});
 
         // target_card_id is declared up front. Mountain's Destroy: an opponent land;
         // Forest's Reclaim: a card in the shared graveyard; Plains' Flicker: another
@@ -72,7 +73,8 @@ class LandGameMatch {
         // appended to the log; replaying the log against the same seed reproduces the match.
         bool apply(const Action& action);
         const std::vector<Action>& action_log() const;
-        static LandGameMatch replay(uint64_t seed, const std::vector<Action>& log);   // throws if the log is rejected
+        static LandGameMatch replay(uint64_t seed, const std::vector<Action>& log,
+                                    MatchConfig config = MatchConfig{});   // throws if the log is rejected
 
         // Everything `player_index` may legally do right now, in a deterministic order. Empty
         // unless it is their move (the choosing player, the priority holder, or the active

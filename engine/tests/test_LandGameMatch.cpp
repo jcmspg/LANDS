@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 #include "lands/LandGameMatch.hpp"
+#include "lands/RandomBot.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -209,7 +210,7 @@ bool hand_holds(const LandGameMatch& match, int player_index, uint32_t card_id) 
 // listing order: P1's hand is 0-4, P2's is 5-10, then the library (11 is the top card). hand(0)[i]
 // is p0[i], so the id of a hand card equals its listed position.
 LandGameMatch make_stacked_match(const std::vector<LandType>& p0, const std::vector<LandType>& p1,
-                                 const std::vector<LandType>& library) {
+                                 const std::vector<LandType>& library, MatchConfig config = MatchConfig{}) {
     uint32_t id = 0;
     std::vector<Card> p0_cards, p1_cards, library_cards;
     for (LandType land_type : p0) { p0_cards.push_back(Card(land_type, id++)); }
@@ -220,7 +221,7 @@ LandGameMatch make_stacked_match(const std::vector<LandType>& p0, const std::vec
     cards.insert(cards.end(), library_cards.rbegin(), library_cards.rend());
     cards.insert(cards.end(), p1_cards.rbegin(), p1_cards.rend());
     cards.insert(cards.end(), p0_cards.rbegin(), p0_cards.rend());
-    return LandGameMatch{Deck(cards)};
+    return LandGameMatch(Deck(cards), 0, config);
 }
 
 // play a land, then let the opponent pass on any window it opened
@@ -2116,6 +2117,68 @@ TEST(LandGameMatch, StateDigestSeesLibraryOrder) {
     LandGameMatch b = make_stacked_match(std::vector<LandType>(5, LandType::FOREST), std::vector<LandType>(6, LandType::FOREST),
                                          {LandType::ISLAND, LandType::PLAINS});
     EXPECT_NE(a.state_digest(), b.state_digest());
+}
+
+TEST(LandGameMatch, DefaultConfigKeepsBothCompensationRules) {
+    LandGameMatch match(12345);
+    EXPECT_EQ(match.hand_size(0), 5);
+    EXPECT_EQ(match.hand_size(1), 6);
+    EXPECT_EQ(match.deck_size(), 39);
+}
+
+TEST(LandGameMatch, DrawSkipOnlyConfig) {
+    LandGameMatch match(12345, MatchConfig::draw_skip_only());
+    EXPECT_EQ(match.hand_size(0), 5);                               // P1 skips its first draw
+    EXPECT_EQ(match.hand_size(1), 5);                               // and P2 gets no sixth card
+    EXPECT_EQ(match.deck_size(), 40);
+}
+
+TEST(LandGameMatch, SixthCardOnlyConfig) {
+    LandGameMatch match(12345, MatchConfig::sixth_card_only());
+    EXPECT_EQ(match.hand_size(0), 6);                               // P1 takes the draw step of turn 1
+    EXPECT_EQ(match.hand_size(1), 6);
+    EXPECT_EQ(match.deck_size(), 38);
+}
+
+TEST(LandGameMatch, NoCompensationConfig) {
+    LandGameMatch match(12345, MatchConfig{false, false});
+    EXPECT_EQ(match.hand_size(0), 6);
+    EXPECT_EQ(match.hand_size(1), 5);
+    EXPECT_EQ(match.deck_size(), 39);
+}
+
+TEST(LandGameMatch, BothConfigIsTheDefault) {
+    LandGameMatch both(12345, MatchConfig::both());
+    LandGameMatch standard(12345);
+    EXPECT_EQ(both.state_digest(), standard.state_digest());
+}
+
+TEST(LandGameMatch, FirstPlayersTurnOneDrawIsTheCardAfterTheOpeningDeal) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             {LandType::ISLAND, LandType::PLAINS}, MatchConfig::sixth_card_only());
+    ASSERT_EQ(match.hand_size(0), 6);
+    EXPECT_EQ(match.hand(0).back(), Card(LandType::ISLAND, 11));    // the top of the library
+    EXPECT_EQ(match.deck_size(), 1);
+}
+
+TEST(LandGameMatch, ConfigsOnAnEmptyLibraryDealOnlyWhatExists) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {},
+                                             MatchConfig::sixth_card_only());
+    EXPECT_EQ(match.hand_size(0), 5);                               // no card left for the turn-1 draw
+    EXPECT_EQ(match.deck_size(), 0);
+}
+
+TEST(LandGameMatch, ReplayHonorsTheConfig) {
+    for (const MatchConfig& config : {MatchConfig::draw_skip_only(), MatchConfig::sixth_card_only(), MatchConfig::both()}) {
+        LandGameMatch match(321, config);
+        RandomBot bot(321);
+        while (bot.step(match)) {}
+
+        const LandGameMatch replayed = LandGameMatch::replay(321, match.action_log(), config);
+        EXPECT_EQ(replayed.state_digest(), match.state_digest());
+    }
 }
 
 } // namespace lands

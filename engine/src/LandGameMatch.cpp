@@ -51,12 +51,17 @@ Deck shuffled_deck(uint64_t seed) {
 
 } // namespace
 
-LandGameMatch::LandGameMatch(uint64_t seed) : LandGameMatch(shuffled_deck(seed), seed) {}
+LandGameMatch::LandGameMatch(uint64_t seed, MatchConfig config)
+    : LandGameMatch(shuffled_deck(seed), seed, config) {}
 
-LandGameMatch::LandGameMatch(Deck deck, uint64_t rng_seed)
+LandGameMatch::LandGameMatch(Deck deck, uint64_t rng_seed, MatchConfig config)
     : deck_(std::move(deck)), rng_(rng_seed ^ 0x9E3779B97F4A7C15ULL) {
     deal_to(players_[0], 5);
-    deal_to(players_[1], 6);
+    deal_to(players_[1], config.second_player_gets_sixth_card ? 6 : 5);
+    // without the compensation rule P1 takes the draw step of turn 1 like everyone else
+    if (!config.first_player_skips_first_draw && deck_.deck_size() > 0) {
+        players_[0].draw_from(deck_);
+    }
 }
 
 size_t LandGameMatch::deck_size() const {
@@ -451,8 +456,8 @@ bool LandGameMatch::apply(const Action& action) {
     return false;
 }
 
-LandGameMatch LandGameMatch::replay(uint64_t seed, const std::vector<Action>& log) {
-    LandGameMatch match(seed);
+LandGameMatch LandGameMatch::replay(uint64_t seed, const std::vector<Action>& log, MatchConfig config) {
+    LandGameMatch match(seed, config);
     for (const Action& action : log) {
         if (!match.apply(action)) {
             throw std::invalid_argument("LandGameMatch::replay: the log holds an action the engine rejects");
