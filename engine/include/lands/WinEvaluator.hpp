@@ -26,6 +26,12 @@ class WinEvaluator {
         ~WinEvaluator() = default;
 
         WinCondition evaluate(const std::array<uint8_t, 5>& land_count) const;
+
+        // GDD §3.6 tiebreaker for deploy-lock and turn-cap endings: most distinct land
+        // types, then most total lands. Returns 0 or 1 for the winning player, or -1
+        // for a true draw.
+        int tiebreak_winner(const std::array<uint8_t, 5>& player_one,
+                            const std::array<uint8_t, 5>& player_two) const;
 };
 
 } // namespace lands

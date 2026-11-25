@@ -6,6 +6,7 @@
 #include "lands/Graveyard.hpp"
 #include "lands/ActionStack.hpp"
 #include "lands/Choice.hpp"
+#include "lands/GameEnd.hpp"
 
 #include <optional>
 #include <vector>
@@ -58,7 +59,17 @@ class LandGameMatch {
         bool pitch_land(int player_index, uint32_t card_id,
                         std::optional<uint32_t> extra_card_id = std::nullopt);
 
-        WinCondition winner() const; // none until someone wins
+        WinCondition winner() const; // DOMAIN / MONO once someone wins that way, else NONE
+
+        // Turn 50 is 25 turns per player; turn_number() counts rounds (one turn each), so the
+        // hard cap is the end of round 25.
+        static constexpr int kMaxRounds = 25;
+
+        bool game_over() const;
+        int winner_player() const;          // -1 while running and after a true draw
+        GameEndReason end_reason() const;
+        bool is_draw() const;
+        bool concede(int player_index);     // legal at any time; the opponent wins immediately
 
         // getters for testing: deck size, hand sizes, land counts
         size_t deck_size() const;
@@ -84,6 +95,10 @@ class LandGameMatch {
         void deal_to(PlayerState& player, size_t num_cards);
         PlayerState players_[2];
         WinCondition winner_{WinCondition::NONE};
+        int winner_player_{-1};
+        GameEndReason end_reason_{GameEndReason::NONE};
+        void end_game(GameEndReason reason, int winner_player);
+        void end_game_by_tiebreak(GameEndReason reason);   // deploy lock / turn cap scoring (GDD §3.6)
 
         // turn related content
         void begin_turn();

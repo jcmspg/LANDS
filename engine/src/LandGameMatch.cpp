@@ -303,7 +303,49 @@ bool LandGameMatch::pass_priority(int player_index) {
 }
 
 bool LandGameMatch::action_blocked() const {
-    return priority_player_ != -1 || pending_choice_.type != ChoiceType::NONE;
+    return game_over() || priority_player_ != -1 || pending_choice_.type != ChoiceType::NONE;
+}
+
+bool LandGameMatch::game_over() const {
+    return end_reason_ != GameEndReason::NONE;
+}
+
+int LandGameMatch::winner_player() const {
+    return winner_player_;
+}
+
+GameEndReason LandGameMatch::end_reason() const {
+    return end_reason_;
+}
+
+bool LandGameMatch::is_draw() const {
+    return game_over() && winner_player_ == -1;
+}
+
+bool LandGameMatch::concede(int player_index) {
+    if (player_index < 0 || player_index >= 2 || game_over()) {
+        return false;
+    }
+    end_game(GameEndReason::CONCEDE, 1 - player_index);
+    return true;
+}
+
+void LandGameMatch::end_game(GameEndReason reason, int winner_player) {
+    end_reason_ = reason;
+    winner_player_ = winner_player;
+    // the match halts instantly: nothing pending can be answered any more
+    priority_player_ = -1;
+    pending_choice_ = PendingChoice{};
+    while (!stack_.empty()) {
+        stack_.pop();
+    }
+    countered_ids_.clear();
+    saved_card_ids_.clear();
+}
+
+void LandGameMatch::end_game_by_tiebreak(GameEndReason reason) {
+    WinEvaluator eval;
+    end_game(reason, eval.tiebreak_winner(players_[0].land_counts(), players_[1].land_counts()));
 }
 
 int LandGameMatch::choice_player() const {
@@ -472,6 +514,10 @@ void LandGameMatch::begin_turn() {
     if (deck_.deck_size() > 0) {
         players_[active_player_].draw_from(deck_);
     }
+    // the mandatory deploy is due, but there is nothing to deploy
+    if (players_[active_player_].hand_size() == 0) {
+        end_game_by_tiebreak(GameEndReason::DEPLOY_LOCK);
+    }
 }
 
 bool LandGameMatch::end_turn(int player_index) {
@@ -484,9 +530,18 @@ bool LandGameMatch::end_turn(int player_index) {
     if (action_blocked()) {
         return false;
     }
+    // the deploy was required but the hand is empty (e.g. the last cards were pitched)
+    if (!played_land_ && players_[player_index].hand_size() == 0) {
+        end_game_by_tiebreak(GameEndReason::DEPLOY_LOCK);
+        return true;
+    }
     played_land_ = false;
     pitched_this_turn_ = false;
     ramp_available_ = false;
+    if (active_player_ == 1 && turn_number_ >= kMaxRounds) {   // turn 50 completes
+        end_game_by_tiebreak(GameEndReason::TURN_CAP);
+        return true;
+    }
     begin_turn();
     return true;
 }
@@ -587,6 +642,8 @@ void LandGameMatch::resolve_top_action() {
             const auto result = eval.evaluate(players_[item.caster_id].land_counts());
             if (result != WinCondition::NONE) { // DOMAIN OR MONO -> NOT THE PLAYER INDEX
                 winner_ = result;
+                end_game(result == WinCondition::MONO ? GameEndReason::MONO : GameEndReason::DOMAIN,
+                         item.caster_id);
             }
         }
     } else {

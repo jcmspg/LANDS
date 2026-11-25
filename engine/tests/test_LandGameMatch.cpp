@@ -204,6 +204,32 @@ bool hand_holds(const LandGameMatch& match, int player_index, uint32_t card_id) 
 }
 
 
+// Builds a match from explicit hands and a library (listed top card first). Card ids follow the
+// listing order: P1's hand is 0-4, P2's is 5-10, then the library (11 is the top card). hand(0)[i]
+// is p0[i], so the id of a hand card equals its listed position.
+LandGameMatch make_stacked_match(const std::vector<LandType>& p0, const std::vector<LandType>& p1,
+                                 const std::vector<LandType>& library) {
+    uint32_t id = 0;
+    std::vector<Card> p0_cards, p1_cards, library_cards;
+    for (LandType land_type : p0) { p0_cards.push_back(Card(land_type, id++)); }
+    for (LandType land_type : p1) { p1_cards.push_back(Card(land_type, id++)); }
+    for (LandType land_type : library) { library_cards.push_back(Card(land_type, id++)); }
+
+    std::vector<Card> cards;    // bottom of the library first, the top card last
+    cards.insert(cards.end(), library_cards.rbegin(), library_cards.rend());
+    cards.insert(cards.end(), p1_cards.rbegin(), p1_cards.rend());
+    cards.insert(cards.end(), p0_cards.rbegin(), p0_cards.rend());
+    return LandGameMatch{Deck(cards)};
+}
+
+// play a land, then let the opponent pass on any window it opened
+bool play_settled(LandGameMatch& match, int player_index, uint32_t card_id,
+                  std::optional<uint32_t> target = std::nullopt) {
+    const bool played = match.play_land(player_index, card_id, target);
+    settle(match);
+    return played;
+}
+
 // A card whose deploy needs no target and opens no choice right now: not an Island (Draw
 // changes hand sizes) or Swamp (Extract pauses for a choice), not a Mountain while the opponent
 // has lands, not a Forest while the graveyard has cards, not a Plains while you control a land.
@@ -1516,6 +1542,243 @@ TEST(LandGameMatch, FlickerChoiceRejectionsKeepTheChoicePending) {
     EXPECT_EQ(match.choice_type(), ChoiceType::FLICKER_DESTROY);
     EXPECT_EQ(match.battlefield(1).size(), 1);
     EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, NewMatchIsRunning) {
+    LandGameMatch match(12345);
+    EXPECT_FALSE(match.game_over());
+    EXPECT_EQ(match.winner_player(), -1);
+    EXPECT_EQ(match.end_reason(), GameEndReason::NONE);
+    EXPECT_FALSE(match.is_draw());
+}
+
+TEST(LandGameMatch, MonoWinEndsTheGame) {
+    const std::vector<LandType> five_forests(5, LandType::FOREST);
+    LandGameMatch match = make_stacked_match(five_forests, std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(10, LandType::MOUNTAIN));
+    for (uint32_t id = 0; id < 5; ++id) {
+        EXPECT_FALSE(match.game_over());
+        ASSERT_TRUE(play_settled(match, 0, id));
+        if (id < 4) {
+            ASSERT_TRUE(match.end_turn(0));
+            ASSERT_TRUE(match.end_turn(1));
+        }
+    }
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.winner(), WinCondition::MONO);
+    EXPECT_EQ(match.winner_player(), 0);
+    EXPECT_EQ(match.end_reason(), GameEndReason::MONO);
+    EXPECT_FALSE(match.is_draw());
+    EXPECT_EQ(match.land_count(0, LandType::FOREST), 5);
+}
+
+TEST(LandGameMatch, DomainWinEndsTheGameBeforeTheFinalEtbAsks) {
+    // Forest, Mountain and Island enter cleanly; Plains flickers the Forest (empty graveyard, no
+    // choice); the Swamp completes the Domain, so its pending Extract is dropped with the game.
+    LandGameMatch match = make_stacked_match(
+        {LandType::FOREST, LandType::MOUNTAIN, LandType::ISLAND, LandType::PLAINS, LandType::SWAMP},
+        std::vector<LandType>(6, LandType::MOUNTAIN), std::vector<LandType>(10, LandType::MOUNTAIN));
+    ASSERT_TRUE(play_settled(match, 0, 0));
+    ASSERT_TRUE(match.end_turn(0));
+    ASSERT_TRUE(match.end_turn(1));
+    ASSERT_TRUE(play_settled(match, 0, 1));
+    ASSERT_TRUE(match.end_turn(0));
+    ASSERT_TRUE(match.end_turn(1));
+    ASSERT_TRUE(play_settled(match, 0, 2));
+    ASSERT_TRUE(match.end_turn(0));
+    ASSERT_TRUE(match.end_turn(1));
+    ASSERT_TRUE(play_settled(match, 0, 3, 0));                      // Plains flickers the Forest
+    ASSERT_EQ(match.choice_player(), -1);
+    ASSERT_TRUE(match.end_turn(0));
+    ASSERT_TRUE(match.end_turn(1));
+    EXPECT_FALSE(match.game_over());
+
+    EXPECT_TRUE(play_settled(match, 0, 4));                         // Swamp: the fifth type
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.winner(), WinCondition::DOMAIN);
+    EXPECT_EQ(match.winner_player(), 0);
+    EXPECT_EQ(match.end_reason(), GameEndReason::DOMAIN);
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.hand_size(1), 6 + 4);                           // the Extract never happened
+}
+
+TEST(LandGameMatch, EveryActionIsRejectedOnceTheGameIsOver) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(10, LandType::MOUNTAIN));
+    ASSERT_TRUE(match.concede(1));
+    ASSERT_TRUE(match.game_over());
+
+    EXPECT_FALSE(match.play_land(0, 0));
+    EXPECT_FALSE(match.pitch_land(0, 0));
+    EXPECT_FALSE(match.end_turn(0));
+    EXPECT_FALSE(match.pass_priority(0));
+    EXPECT_FALSE(match.pass_priority(1));
+    EXPECT_FALSE(match.cast_counter(0, 0, 1, 1));
+    EXPECT_FALSE(match.cast_save(0, 0, 1));
+    EXPECT_FALSE(match.choose_card(0, 0));
+    EXPECT_FALSE(match.choose_surveil(0, {}, {}));
+    EXPECT_FALSE(match.concede(0));
+    EXPECT_FALSE(match.concede(1));
+    EXPECT_EQ(match.hand_size(0), 5);
+    EXPECT_EQ(match.winner_player(), 0);                            // the result never changes
+}
+
+TEST(LandGameMatch, ConcedeGivesTheOpponentTheWinAtAnyTime) {
+    LandGameMatch match = make_stacked_match({LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(10, LandType::MOUNTAIN));
+    ASSERT_TRUE(play_settled(match, 0, 0));                         // Swamp: Extract is now pending
+    ASSERT_EQ(match.choice_type(), ChoiceType::EXTRACT);
+
+    EXPECT_FALSE(match.concede(-1));
+    EXPECT_FALSE(match.concede(2));
+    EXPECT_TRUE(match.concede(0));                                  // the choosing player may still concede
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.winner_player(), 1);
+    EXPECT_EQ(match.end_reason(), GameEndReason::CONCEDE);
+    EXPECT_EQ(match.winner(), WinCondition::NONE);                  // not a Domain / Mono win
+    EXPECT_EQ(match.choice_player(), -1);
+}
+
+TEST(LandGameMatch, ConcedeDuringAPriorityWindowClearsIt) {
+    LandGameMatch match = make_match_where_only_p1_can_counter();
+    ASSERT_TRUE(match.play_land(0, plain_card_id(match, 0)));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_TRUE(match.concede(1));
+    EXPECT_EQ(match.winner_player(), 0);
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_EQ(match.stack_size(), 0);
+}
+
+TEST(LandGameMatch, TurnCapEndsInADrawWhenBoardsAreEqual) {
+    LandGameMatch match(42);
+    for (int round = 1; round < LandGameMatch::kMaxRounds; ++round) {
+        ASSERT_TRUE(match.end_turn(0));
+        ASSERT_TRUE(match.end_turn(1));
+        ASSERT_FALSE(match.game_over()) << "ended early in round " << round;
+    }
+    EXPECT_EQ(match.turn_number(), LandGameMatch::kMaxRounds);
+    ASSERT_TRUE(match.end_turn(0));
+    EXPECT_FALSE(match.game_over());                                // P2's 25th turn is still to play
+
+    EXPECT_TRUE(match.end_turn(1));                                 // turn 50 completes
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.end_reason(), GameEndReason::TURN_CAP);
+    EXPECT_TRUE(match.is_draw());
+    EXPECT_EQ(match.winner_player(), -1);
+    EXPECT_EQ(match.deck_size(), 0);                                // the library ran out on the way; play continued
+}
+
+TEST(LandGameMatch, TurnCapAwardsTheTiebreakWinner) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(40, LandType::MOUNTAIN));
+    ASSERT_TRUE(play_settled(match, 0, 0));                         // P1 has one land, P2 none
+    for (int round = 1; round < LandGameMatch::kMaxRounds; ++round) {
+        ASSERT_TRUE(match.end_turn(0));
+        ASSERT_TRUE(match.end_turn(1));
+    }
+    ASSERT_TRUE(match.end_turn(0));
+    ASSERT_TRUE(match.end_turn(1));
+
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.end_reason(), GameEndReason::TURN_CAP);
+    EXPECT_FALSE(match.is_draw());
+    EXPECT_EQ(match.winner_player(), 0);
+    EXPECT_EQ(match.winner(), WinCondition::NONE);
+}
+
+// Library empty, so hands only shrink: P1 holds 5 cards and P2 holds 6. After round 5 P1's hand is
+// empty when its turn-6 deploy comes due. `p1_plays[r]` / `p2_plays[r]` name the card ids to deploy in round r.
+LandGameMatch run_deploy_lock_game(const std::vector<LandType>& p0, const std::vector<LandType>& p1,
+                                   const std::vector<int>& p1_plays) {
+    LandGameMatch match = make_stacked_match(p0, p1, {});
+    for (uint32_t round = 0; round < 5; ++round) {
+        EXPECT_TRUE(play_settled(match, 0, round));
+        EXPECT_TRUE(match.end_turn(0));
+        if (p1_plays[round] >= 0) {
+            EXPECT_TRUE(play_settled(match, 1, static_cast<uint32_t>(p1_plays[round])));
+        }
+        EXPECT_FALSE(match.game_over());
+        EXPECT_TRUE(match.end_turn(1));                             // round 5: P1's turn 6 starts empty-handed
+    }
+    return match;
+}
+
+TEST(LandGameMatch, DeployLockAtTurnStartScoresByDistinctTypes) {
+    // P1: 4 Forests + Island (2 types); P2: 4 Forests (1 type)
+    LandGameMatch match = run_deploy_lock_game(
+        {LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::ISLAND},
+        {LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::ISLAND, LandType::ISLAND},
+        {5, 6, 7, 8, -1});
+
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.end_reason(), GameEndReason::DEPLOY_LOCK);
+    EXPECT_EQ(match.hand_size(0), 0);
+    EXPECT_EQ(match.winner_player(), 0);
+    EXPECT_FALSE(match.is_draw());
+}
+
+TEST(LandGameMatch, DeployLockScoresByTotalLandsWhenTypesTie) {
+    // both control Forests + an Island, but P2 skipped a deploy: 5 lands vs 4
+    LandGameMatch match = run_deploy_lock_game(
+        {LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::ISLAND},
+        {LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::ISLAND, LandType::ISLAND, LandType::ISLAND},
+        {5, 6, 7, -1, 8});
+
+    EXPECT_EQ(match.end_reason(), GameEndReason::DEPLOY_LOCK);
+    EXPECT_EQ(match.land_count(0, LandType::FOREST) + match.land_count(0, LandType::ISLAND), 5);
+    EXPECT_EQ(match.land_count(1, LandType::FOREST) + match.land_count(1, LandType::ISLAND), 4);
+    EXPECT_EQ(match.winner_player(), 0);
+}
+
+TEST(LandGameMatch, DeployLockWithIdenticalBoardsIsADraw) {
+    LandGameMatch match = run_deploy_lock_game(
+        {LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::ISLAND},
+        {LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::ISLAND, LandType::ISLAND},
+        {5, 6, 7, 8, 9});
+
+    EXPECT_EQ(match.end_reason(), GameEndReason::DEPLOY_LOCK);
+    EXPECT_TRUE(match.is_draw());
+    EXPECT_EQ(match.winner_player(), -1);
+}
+
+TEST(LandGameMatch, EmptyHandAfterTheDeployIsNotALockYet) {
+    LandGameMatch match = make_stacked_match(
+        {LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::ISLAND},
+        std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    for (uint32_t round = 0; round < 4; ++round) {
+        ASSERT_TRUE(play_settled(match, 0, round));
+        ASSERT_TRUE(match.end_turn(0));
+        ASSERT_TRUE(match.end_turn(1));
+    }
+    ASSERT_TRUE(match.play_land(0, 4));                             // the last card in hand
+    EXPECT_EQ(match.hand_size(0), 0);
+    EXPECT_TRUE(match.end_turn(0));                                 // the deploy was made: not a lock
+    EXPECT_FALSE(match.game_over());
+    EXPECT_TRUE(match.end_turn(1));                                 // P1's next deploy is now due with nothing to play
+    EXPECT_EQ(match.end_reason(), GameEndReason::DEPLOY_LOCK);
+    EXPECT_EQ(match.winner_player(), 0);                            // 5 lands vs. an empty board
+}
+
+TEST(LandGameMatch, PitchingTheLastCardLocksTheDeploy) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    for (uint32_t round = 0; round < 4; ++round) {
+        ASSERT_TRUE(play_settled(match, 0, round));
+        ASSERT_TRUE(match.end_turn(0));
+        ASSERT_TRUE(match.end_turn(1));
+    }
+    ASSERT_TRUE(match.pitch_land(0, 4));                            // Ramp on the last card: nothing left to deploy
+    ASSERT_EQ(match.hand_size(0), 0);
+    ASSERT_FALSE(match.game_over());
+
+    EXPECT_TRUE(match.end_turn(0));
+    EXPECT_TRUE(match.game_over());
+    EXPECT_EQ(match.end_reason(), GameEndReason::DEPLOY_LOCK);
+    EXPECT_EQ(match.winner_player(), 0);                            // 4 Forests vs. an empty board
 }
 
 } // namespace lands
