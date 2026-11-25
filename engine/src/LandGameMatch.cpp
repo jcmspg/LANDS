@@ -215,6 +215,18 @@ void LandGameMatch::resolve_top_action() {
     if (item.mode == PlayMode::DEPLOY) {
         players_[item.caster_id].add_to_board(item.card.get_land_type());
 
+        // ETB (GDD §3.5); a ramped deploy carries AbilityId::NONE and enters vanilla
+        switch (item.ability) {
+            case AbilityId::DRAW:
+                // empty library: the draw does nothing but the land still enters
+                if (deck_.deck_size() > 0) {
+                    players_[item.caster_id].draw_from(deck_);
+                }
+                break;
+            default:
+                break;  // Flicker / Destroy / Extract / Reclaim are not wired up yet
+        }
+
         WinEvaluator eval;
         const auto result = eval.evaluate(players_[item.caster_id].land_counts());
         if (result != WinCondition::NONE) { // DOMAIN OR MONO -> NOT THE PLAYER INDEX

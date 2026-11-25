@@ -357,4 +357,64 @@ TEST(LandGameMatch, PitchRejectsWrongPlayerAndBadIds) {
     EXPECT_TRUE(match.pitch_land(1, forest));       // now it is
 }
 
+TEST(LandGameMatch, DeployIslandDrawsACard) {
+    LandGameMatch match = make_match_with(0, {LandType::ISLAND});
+    const uint32_t island = *find_in_hand(match, 0, LandType::ISLAND);
+
+    EXPECT_TRUE(match.play_land(0, island));
+    EXPECT_EQ(match.land_count(0, LandType::ISLAND), 1);
+    EXPECT_EQ(match.hand_size(0), 5);               // 5 - 1 deployed + 1 drawn
+    EXPECT_EQ(match.deck_size(), 38);
+    EXPECT_EQ(match.graveyard_size(), 0);
+    EXPECT_EQ(match.stack_size(), 0);
+}
+
+TEST(LandGameMatch, DeployNonIslandDrawsNothing) {
+    LandGameMatch match = make_match_with(0, {LandType::FOREST});
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+
+    EXPECT_TRUE(match.play_land(0, forest));
+    EXPECT_EQ(match.hand_size(0), 4);
+    EXPECT_EQ(match.deck_size(), 39);
+}
+
+TEST(LandGameMatch, RampedIslandEntersVanillaAndDrawsNothing) {
+    LandGameMatch match = make_match_with(0, {LandType::FOREST, LandType::ISLAND});
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t island = *find_in_hand(match, 0, LandType::ISLAND);
+
+    EXPECT_TRUE(match.pitch_land(0, forest));
+    EXPECT_TRUE(match.play_land(0, first_card_other_than(match, 0, island)));   // normal deploy
+    ASSERT_FALSE(match.hand(0).empty());
+    const size_t hand_before = match.hand_size(0);
+    const size_t deck_before = match.deck_size();
+
+    EXPECT_TRUE(match.play_land(0, island));                                    // the ramped deploy
+    EXPECT_EQ(match.land_count(0, LandType::ISLAND), 1);
+    EXPECT_EQ(match.hand_size(0), hand_before - 1);     // no draw: vanilla
+    EXPECT_EQ(match.deck_size(), deck_before);
+}
+
+TEST(LandGameMatch, DeployIslandWithEmptyLibraryStillEnters) {
+    for (uint64_t seed = 1; seed < 1000; ++seed) {
+        LandGameMatch match(seed);
+        while (match.deck_size() > 0) {
+            ASSERT_TRUE(match.end_turn(match.active_player()));
+        }
+        const int player = match.active_player();
+        const std::optional<uint32_t> island = find_in_hand(match, player, LandType::ISLAND);
+        if (!island.has_value()) {
+            continue;
+        }
+        const size_t hand_before = match.hand_size(player);
+
+        EXPECT_TRUE(match.play_land(player, *island));
+        EXPECT_EQ(match.land_count(player, LandType::ISLAND), 1);
+        EXPECT_EQ(match.hand_size(player), hand_before - 1);
+        EXPECT_EQ(match.deck_size(), 0);
+        return;
+    }
+    FAIL() << "no seed produced an Island in the active player's hand";
+}
+
 } // namespace lands
