@@ -7,6 +7,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Opt-in AddressSanitizer + UndefinedBehaviorSanitizer build:
+#   cmake -S engine -B engine/build-san -DLANDS_SANITIZE=ON
+option(LANDS_SANITIZE "Build with ASan and UBSan" OFF)
+if(LANDS_SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 # libraries
 
 add_library(lands STATIC

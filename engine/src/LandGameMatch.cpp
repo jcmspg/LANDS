@@ -763,15 +763,33 @@ bool LandGameMatch::choose_surveil(int player_index, const std::vector<uint32_t>
         return false;
     }
 
-    // every peeked card must be named exactly once, and nothing else
-    std::vector<uint32_t> named = to_graveyard;
-    named.insert(named.end(), library_top_order.begin(), library_top_order.end());
+    // resolve every named id to a peeked card first; an unknown id is an illegal answer
     const std::vector<Card>& options = pending_choice_.options;
-    if (named.size() != options.size()) {
+    std::vector<Card> binned;
+    std::vector<Card> kept;
+    for (uint32_t card_id : to_graveyard) {
+        const Card* card = find_card(options, card_id);
+        if (card == nullptr) {
+            return false;
+        }
+        binned.push_back(*card);
+    }
+    for (uint32_t card_id : library_top_order) {
+        const Card* card = find_card(options, card_id);
+        if (card == nullptr) {
+            return false;
+        }
+        kept.push_back(*card);
+    }
+
+    // every peeked card must be named exactly once
+    if (binned.size() + kept.size() != options.size()) {
         return false;
     }
     for (const Card& option : options) {
-        if (std::count(named.begin(), named.end(), option.get_identifier()) != 1) {
+        const auto same_card = [&option](const Card& card) { return card == option; };
+        if (std::count_if(binned.begin(), binned.end(), same_card) +
+            std::count_if(kept.begin(), kept.end(), same_card) != 1) {
             return false;
         }
     }
@@ -782,11 +800,11 @@ bool LandGameMatch::choose_surveil(int player_index, const std::vector<uint32_t>
     for (size_t i = 0; i < options.size(); ++i) {
         deck_.draw();
     }
-    for (uint32_t card_id : to_graveyard) {
-        graveyard_.add(*find_card(options, card_id));
+    for (const Card& card : binned) {
+        graveyard_.add(card);
     }
-    for (auto it = library_top_order.rbegin(); it != library_top_order.rend(); ++it) {
-        deck_.put_on_top(*find_card(options, *it));
+    for (auto it = kept.rbegin(); it != kept.rend(); ++it) {
+        deck_.put_on_top(*it);
     }
     pending_choice_ = PendingChoice{};
     return true;

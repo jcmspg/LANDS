@@ -42,6 +42,13 @@ ctest --test-dir engine/build --output-on-failure
 ./engine/build/lands_sim --matches 10000    # simulation harness (also runs under ctest as simulation_*)
 ```
 
+Optional sanitizer build (ASan + UBSan) in a separate directory, which catches null dereferences, out-of-range accesses and UB with a readable report:
+
+```bash
+cmake -S engine -B engine/build-san -DLANDS_SANITIZE=ON
+cmake --build engine/build-san && ctest --test-dir engine/build-san --output-on-failure
+```
+
 Run a single test suite binary directly (built under `engine/build/`), e.g.:
 
 ```bash

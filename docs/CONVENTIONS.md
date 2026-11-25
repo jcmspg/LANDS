@@ -49,6 +49,11 @@ Rules of thumb:
 - Keep tests independent; no shared mutable state between `TEST`s.
 - Cross-cutting invariants (legal actions vs. accepted actions, termination, replay determinism) live in `test_MatchProperties.cpp` and run whole random games; per-rule tests stay in `test_LandGameMatch.cpp`.
 
+## Defensive style
+
+- Functions that look a card up by id (`find_card`, `take_from_hand`, ...) can come back empty. In an action method, resolve every id and reject with `false` **before** recording or mutating anything; never dereference a lookup that validation "should" have made safe. Validation in depth is cheap and keeps a weakened check from becoming a crash.
+- Before merging a change that touches shared engine code, run the sanitizer build (see `CLAUDE.md`). When deliberately mutating code to check that a test catches it, do it in a scratch copy or restore the file straight away: a mutant that crashes sets off desktop crash notifications.
+
 ## Commits
 
 - One logical change per commit; a bug fix is never bundled with a feature.
