@@ -20,6 +20,7 @@ class PlayerState {
         const std::array<uint8_t, 5>& land_counts() const;
         size_t hand_size() const;
 
+        void add_to_hand(const Card& card);
         bool has_card(uint32_t card_id) const;
         Card take_from_hand(uint32_t card_id);   // throws if the card is not in hand
         void add_to_board(const Card& card);

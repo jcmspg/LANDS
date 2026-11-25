@@ -31,6 +31,10 @@ const std::array<uint8_t, 5>& PlayerState::land_counts() const {
     return land_counts_;
 }
 
+void PlayerState::add_to_hand(const Card& card) {
+    hand_.push_back(card);
+}
+
 bool PlayerState::has_card(uint32_t card_id) const {
     return std::any_of(hand_.begin(), hand_.end(), [card_id](const Card& card) {
         return card.get_identifier() == card_id;

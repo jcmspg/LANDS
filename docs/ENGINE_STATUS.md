@@ -12,7 +12,8 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Deploy and pitch through the stack; priority window for the pusher's opponent (`priority_player`, `pass_priority`); auto-pass when the opponent cannot respond | done | §4.2, §4.3 |
 | Win check (Domain / Mono) after each resolution | done | §3.3 |
 | Shared graveyard | exists, **nothing writes to it yet** | §3.1 |
-| Deploy ETBs Flicker, Extract, Reclaim | **not implemented**; they enter vanilla and `play_land` rejects a target for them | §3.5 |
+| Forest Reclaim ETB: graveyard target declared up front, required iff the graveyard is non-empty, can take cards the opponent pitched, nothing if countered | done | §3.5, §8.4 |
+| Deploy ETBs Flicker, Extract | **not implemented**; they enter vanilla and `play_land` rejects a target for them | §3.5 |
 | Main-phase pitch: Forest Ramp, Mountain Rummage (`pitch_land`, 1/turn, goes through the stack) | done | §3.2, §3.4, §3.5 |
 | Island Draw ETB (no-op on empty library) | done | §3.5 |
 | Ramped deploy enters vanilla (`AbilityId::NONE`) | done, tested via Island Draw | §3.2 |
@@ -46,7 +47,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 2. ~~**Deploy ETB without choices:** Island Draw.~~ Done. Destroy / Reclaim / Extract / Flicker need a target-choice mechanism and are folded into slice 5.
 3. ~~**Priority window + Island Counter** (Memory Lapse semantics, counter wars).~~ Done.
 4. ~~**Battlefield identity, Mountain Destroy, Plains Save.**~~ Done.
-5. **Forest Reclaim:** graveyard target declared up front (§8.4), so it needs no choice prompt; vanilla if the graveyard is empty.
+5. ~~**Forest Reclaim.**~~ Done.
 6. **Choice prompts:** Swamp Extract and Surveil 2 (hidden-information choices during resolution), then Plains Flicker including re-triggered ETBs that gather fresh choices, the anti-loop rule, and no priority window for re-triggered ETBs.
 7. **Game end:** mandatory deploy, empty-hand loss, turn-50 cap, tiebreaker scoring.
 8. **Action log + replay** from seed, then the bot simulation harness (GDD Phase 1).

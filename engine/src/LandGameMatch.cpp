@@ -79,6 +79,13 @@ bool LandGameMatch::valid_deploy_target(int caster_index, AbilityId ability,
             }
             return target_card_id.has_value() && opponent.has_on_board(*target_card_id);
         }
+        case AbilityId::RECLAIM: {
+            const std::vector<Card>& cards = graveyard_.cards();
+            if (cards.empty()) {
+                return !target_card_id.has_value();     // nothing to take: enters vanilla
+            }
+            return target_card_id.has_value() && find_card(cards, *target_card_id) != nullptr;
+        }
         default:
             return !target_card_id.has_value();
     }
@@ -415,8 +422,15 @@ void LandGameMatch::resolve_top_action() {
                     }
                     break;
                 }
+                case AbilityId::RECLAIM:
+                    // any card, including ones the opponent pitched or lost (shared graveyard)
+                    if (item.target_card_id.has_value() &&
+                        find_card(graveyard_.cards(), *item.target_card_id) != nullptr) {
+                        players_[item.caster_id].add_to_hand(graveyard_.take_card(*item.target_card_id));
+                    }
+                    break;
                 default:
-                    break;  // Flicker / Extract / Reclaim are not wired up yet
+                    break;  // Flicker / Extract are not wired up yet
             }
 
             WinEvaluator eval;

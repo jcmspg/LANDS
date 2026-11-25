@@ -15,8 +15,9 @@ class LandGameMatch {
     public:
         explicit LandGameMatch(uint64_t seed);   // shuffle + deal
 
-        // target_card_id: Mountain's Destroy target (an opponent land). It is required
-        // exactly when the opponent controls a land, and rejected otherwise.
+        // target_card_id is declared up front. Mountain's Destroy: an opponent land;
+        // Forest's Reclaim: a card in the shared graveyard. It is required exactly
+        // when a valid target exists, and rejected otherwise.
         bool play_land(int player_index, uint32_t card_id,
                        std::optional<uint32_t> target_card_id = std::nullopt);
 

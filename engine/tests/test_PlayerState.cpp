@@ -115,4 +115,12 @@ TEST(PlayerState, RemoveFromBoardByCardId) {
     EXPECT_THROW(player_state.remove_from_board(9), std::out_of_range);
 }
 
+TEST(PlayerState, AddToHand) {
+    PlayerState player_state;
+    player_state.add_to_hand(Card(LandType::SWAMP, 3));
+    EXPECT_EQ(player_state.hand_size(), 1);
+    EXPECT_TRUE(player_state.has_card(3));
+    EXPECT_EQ(player_state.land_counts(), (std::array<uint8_t, 5>{0, 0, 0, 0, 0}));
+}
+
 } // namespace lands

@@ -149,6 +149,33 @@ LandGameMatch make_destroy_scenario(bool p1_plains, bool p0_island,
     return LandGameMatch(0);
 }
 
+// a card in P0's hand that is not any of the given types
+uint32_t first_card_not_of_types(const LandGameMatch& match, int player_index,
+                                 const std::vector<LandType>& land_types) {
+    for (const Card& card : match.hand(player_index)) {
+        if (std::find(land_types.begin(), land_types.end(), card.get_land_type()) == land_types.end()) {
+            return card.get_identifier();
+        }
+    }
+    ADD_FAILURE() << "hand holds only the excluded land types";
+    return 0;
+}
+
+// P0 holds a Forest, a Mountain and some third land; Rummage then puts the Mountain in the graveyard.
+LandGameMatch make_reclaim_match(bool p1_island) {
+    return make_match_where([p1_island](const LandGameMatch& match) {
+        const auto& hand = match.hand(0);
+        const bool third = std::any_of(hand.begin(), hand.end(), [](const Card& card) {
+            return card.get_land_type() != LandType::FOREST && card.get_land_type() != LandType::MOUNTAIN;
+        });
+        return third &&
+               find_in_hand(match, 0, LandType::FOREST).has_value() &&
+               find_in_hand(match, 0, LandType::MOUNTAIN).has_value() &&
+               !find_in_hand(match, 0, LandType::ISLAND).has_value() &&
+               count_in_hand(match, 1, LandType::ISLAND) == (p1_island ? 1 : 0);
+    });
+}
+
 size_t total_lands(const LandGameMatch& match, int player_index) {
     size_t total = 0;
     for (uint8_t t = 0; t < static_cast<uint8_t>(LandType::NUM_LAND_TYPES); ++t) {
@@ -858,6 +885,88 @@ TEST(LandGameMatch, CounteredSaveLetsDestroyResolve) {
     EXPECT_TRUE(match.battlefield(1).empty());                      // the Save never applied
     EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);
     EXPECT_EQ(match.graveyard_size(), 4);                           // Plains, Island, cost card, destroyed land
+}
+
+TEST(LandGameMatch, ReclaimReturnsTargetedGraveyardCardToHand) {
+    LandGameMatch match = make_reclaim_match(false);
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+    ASSERT_TRUE(match.pitch_land(0, mountain, first_card_not_of_types(match, 0, {LandType::FOREST, LandType::MOUNTAIN})));
+    ASSERT_EQ(match.graveyard_size(), 2);
+    const size_t hand_before = match.hand_size(0);
+
+    EXPECT_TRUE(match.play_land(0, forest, mountain));
+    EXPECT_EQ(match.land_count(0, LandType::FOREST), 1);
+    EXPECT_EQ(match.hand_size(0), hand_before - 1 + 1);             // Forest out, reclaimed card in
+    EXPECT_TRUE(match.hand(0).end() != std::find_if(match.hand(0).begin(), match.hand(0).end(),
+        [mountain](const Card& card) { return card.get_identifier() == mountain; }));
+    EXPECT_EQ(match.graveyard_size(), 1);
+    EXPECT_EQ(total_lands(match, 0), 1);                            // reclaiming deploys nothing extra
+}
+
+TEST(LandGameMatch, ReclaimRequiresGraveyardTargetWhenNotEmpty) {
+    LandGameMatch match = make_reclaim_match(false);
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+    ASSERT_TRUE(match.pitch_land(0, mountain, first_card_not_of_types(match, 0, {LandType::FOREST, LandType::MOUNTAIN})));
+    const size_t hand_before = match.hand_size(0);
+
+    EXPECT_FALSE(match.play_land(0, forest));                       // a target exists, so one is required
+    EXPECT_FALSE(match.play_land(0, forest, 9999));                 // no such card
+    EXPECT_FALSE(match.play_land(0, forest, first_card_not_of_types(match, 0, {LandType::FOREST})));  // in hand
+    EXPECT_FALSE(match.played_land_this_turn());
+    EXPECT_EQ(match.hand_size(0), hand_before);
+    EXPECT_EQ(match.graveyard_size(), 2);
+    EXPECT_EQ(match.stack_size(), 0);
+}
+
+TEST(LandGameMatch, ReclaimEntersVanillaWhenGraveyardIsEmpty) {
+    LandGameMatch match = make_match_with(0, {LandType::FOREST});
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+
+    EXPECT_FALSE(match.play_land(0, forest, 9999));                 // nothing to take
+    EXPECT_TRUE(match.play_land(0, forest));
+    EXPECT_EQ(match.hand_size(0), 4);
+    EXPECT_EQ(match.land_count(0, LandType::FOREST), 1);
+}
+
+TEST(LandGameMatch, ReclaimCanTakeCardsTheOpponentPitched) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 0, LandType::FOREST) >= 1 &&
+               count_in_hand(m, 1, LandType::MOUNTAIN) >= 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0 &&
+               count_in_hand(m, 1, LandType::ISLAND) == 0;
+    });
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t p1_mountain = *find_in_hand(match, 1, LandType::MOUNTAIN);
+    ASSERT_TRUE(match.end_turn(0));                                 // P1's turn
+    ASSERT_TRUE(match.pitch_land(1, p1_mountain, first_card_other_than(match, 1, p1_mountain)));
+    ASSERT_TRUE(match.end_turn(1));                                 // P0's turn 2
+
+    EXPECT_TRUE(match.play_land(0, forest, p1_mountain));
+    settle(match);                                                  // Rummage may have drawn P1 an Island
+    EXPECT_TRUE(match.hand(0).end() != std::find_if(match.hand(0).begin(), match.hand(0).end(),
+        [p1_mountain](const Card& card) { return card.get_identifier() == p1_mountain; }));
+    EXPECT_EQ(match.graveyard_size(), 1);                           // only the opponent's cost card remains
+}
+
+TEST(LandGameMatch, CounteredForestReclaimsNothing) {
+    LandGameMatch match = make_reclaim_match(true);
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    ASSERT_TRUE(match.pitch_land(0, mountain, first_card_not_of_types(match, 0, {LandType::FOREST, LandType::MOUNTAIN})));
+    settle(match);                                                  // P1 declines to counter the pitch
+    ASSERT_TRUE(match.play_land(0, forest, mountain));
+    ASSERT_EQ(match.priority_player(), 1);
+    const size_t p0_hand_before = match.hand_size(0);
+
+    EXPECT_TRUE(match.cast_counter(1, island, first_card_other_than(match, 1, island),
+                                   match.stack_top().stack_id));
+    EXPECT_EQ(match.hand_size(0), p0_hand_before);                  // nothing came back
+    EXPECT_EQ(match.land_count(0, LandType::FOREST), 0);
+    EXPECT_EQ(match.graveyard_size(), 4);                           // Mountain, discard, Island, cost card
+    EXPECT_EQ(match.deck_size(), 38);                               // the Forest went on top of the library
 }
 
 } // namespace lands
