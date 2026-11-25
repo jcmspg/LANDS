@@ -56,6 +56,10 @@ add_executable(test_ActionStack
     tests/test_ActionStack.cpp
 )
 
+add_executable(test_MatchProperties
+    tests/test_MatchProperties.cpp
+)
+
 target_link_libraries(test_WinEvaluator PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
@@ -84,6 +88,10 @@ target_link_libraries(test_ActionStack PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
 
+target_link_libraries(test_MatchProperties PRIVATE
+    lands GTest::gtest GTest::gtest_main
+)
+
 include(GoogleTest)
 gtest_discover_tests(test_WinEvaluator)
 gtest_discover_tests(test_Deck)
@@ -92,3 +100,4 @@ gtest_discover_tests(test_LandGameMatch)
 gtest_discover_tests(test_LandRules)
 gtest_discover_tests(test_Graveyard)
 gtest_discover_tests(test_ActionStack)
+gtest_discover_tests(test_MatchProperties)

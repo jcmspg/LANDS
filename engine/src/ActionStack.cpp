@@ -37,6 +37,10 @@ bool ActionStack::targets_card(uint32_t card_id) const {
     });
 }
 
+const std::vector<StackItem>& ActionStack::items() const {
+    return items_;
+}
+
 bool ActionStack::empty() const {
     return items_.empty();
 }

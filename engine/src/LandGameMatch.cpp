@@ -149,6 +149,7 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id,
     // the deploy is used up even if it ends up countered
     played_land_ = true;
 
+    record(Action{ActionType::PLAY_LAND, player_index, card_id, std::nullopt, target_card_id, {}, {}});
     stack_.push(std::move(item));
     open_priority_window(player_index);
 
@@ -212,6 +213,7 @@ bool LandGameMatch::pitch_land(int player_index, uint32_t card_id,
     // the pitch is used up even if it ends up countered
     pitched_this_turn_ = true;
 
+    record(Action{ActionType::PITCH_LAND, player_index, card_id, extra_card_id, std::nullopt, {}, {}});
     stack_.push(std::move(item));
     open_priority_window(player_index);
 
@@ -251,6 +253,7 @@ bool LandGameMatch::cast_counter(int player_index, uint32_t island_card_id,
         target_stack_id
     };
 
+    record(Action{ActionType::CAST_COUNTER, player_index, island_card_id, extra_card_id, target_stack_id, {}, {}});
     stack_.push(std::move(item));
     open_priority_window(player_index);
 
@@ -284,6 +287,7 @@ bool LandGameMatch::cast_save(int player_index, uint32_t plains_card_id, uint32_
         land_card_id
     };
 
+    record(Action{ActionType::CAST_SAVE, player_index, plains_card_id, std::nullopt, land_card_id, {}, {}});
     stack_.push(std::move(item));
     open_priority_window(player_index);
 
@@ -297,6 +301,7 @@ bool LandGameMatch::pass_priority(int player_index) {
     if (player_index != priority_player_) {
         return false;
     }
+    record(Action{ActionType::PASS_PRIORITY, player_index, 0, std::nullopt, std::nullopt, {}, {}});
     priority_player_ = -1;
     resolve_stack();
     return true;
@@ -304,6 +309,179 @@ bool LandGameMatch::pass_priority(int player_index) {
 
 bool LandGameMatch::action_blocked() const {
     return game_over() || priority_player_ != -1 || pending_choice_.type != ChoiceType::NONE;
+}
+
+void LandGameMatch::record(Action action) {
+    action_log_.push_back(std::move(action));
+}
+
+const std::vector<Action>& LandGameMatch::action_log() const {
+    return action_log_;
+}
+
+bool LandGameMatch::apply(const Action& action) {
+    switch (action.type) {
+        case ActionType::PLAY_LAND:
+            return play_land(action.player, action.card_id, action.target_id);
+        case ActionType::PITCH_LAND:
+            return pitch_land(action.player, action.card_id, action.extra_id);
+        case ActionType::CAST_COUNTER:
+            return action.extra_id.has_value() && action.target_id.has_value() &&
+                   cast_counter(action.player, action.card_id, *action.extra_id, *action.target_id);
+        case ActionType::CAST_SAVE:
+            return action.target_id.has_value() &&
+                   cast_save(action.player, action.card_id, *action.target_id);
+        case ActionType::PASS_PRIORITY:
+            return pass_priority(action.player);
+        case ActionType::CHOOSE_CARD:
+            return choose_card(action.player, action.card_id);
+        case ActionType::CHOOSE_SURVEIL:
+            return choose_surveil(action.player, action.to_graveyard, action.top_order);
+        case ActionType::END_TURN:
+            return end_turn(action.player);
+        case ActionType::CONCEDE:
+            return concede(action.player);
+    }
+    return false;
+}
+
+LandGameMatch LandGameMatch::replay(uint64_t seed, const std::vector<Action>& log) {
+    LandGameMatch match(seed);
+    for (const Action& action : log) {
+        if (!match.apply(action)) {
+            throw std::invalid_argument("LandGameMatch::replay: the log holds an action the engine rejects");
+        }
+    }
+    return match;
+}
+
+bool LandGameMatch::deploy_due() const {
+    return !game_over() && !played_land_ && players_[active_player_].hand_size() > 0;
+}
+
+std::vector<Action> LandGameMatch::legal_actions(int player_index) const {
+    require_player_index(player_index);
+    if (game_over()) {
+        return {};
+    }
+    if (pending_choice_.type != ChoiceType::NONE) {
+        return player_index == pending_choice_.player ? choice_actions(player_index) : std::vector<Action>{};
+    }
+    if (priority_player_ != -1) {
+        return player_index == priority_player_ ? priority_actions(player_index) : std::vector<Action>{};
+    }
+    return player_index == active_player_ ? main_phase_actions(player_index) : std::vector<Action>{};
+}
+
+std::vector<Action> LandGameMatch::choice_actions(int player_index) const {
+    std::vector<Action> actions;
+    const std::vector<Card>& options = pending_choice_.options;
+
+    if (pending_choice_.type != ChoiceType::SURVEIL) {
+        for (const Card& option : options) {
+            actions.push_back(Action{ActionType::CHOOSE_CARD, player_index, option.get_identifier(), std::nullopt, std::nullopt, {}, {}});
+        }
+        return actions;
+    }
+
+    // Surveil: every subset to bin, and every order of the cards that stay
+    for (unsigned mask = 0; mask < (1u << options.size()); ++mask) {
+        std::vector<uint32_t> binned;
+        std::vector<uint32_t> kept;
+        for (size_t i = 0; i < options.size(); ++i) {
+            ((mask >> i) & 1u ? binned : kept).push_back(options[i].get_identifier());
+        }
+        std::sort(kept.begin(), kept.end());
+        do {
+            actions.push_back(Action{ActionType::CHOOSE_SURVEIL, player_index, 0, std::nullopt, std::nullopt, binned, kept});
+        } while (std::next_permutation(kept.begin(), kept.end()));
+    }
+    return actions;
+}
+
+std::vector<Action> LandGameMatch::priority_actions(int player_index) const {
+    std::vector<Action> actions;
+    actions.push_back(Action{ActionType::PASS_PRIORITY, player_index, 0, std::nullopt, std::nullopt, {}, {}});
+
+    const PlayerState& player = players_[player_index];
+    for (const Card& card : player.hand()) {
+        const AbilityId pitch = get(card.get_land_type()).pitch_ability;
+        if (pitch == AbilityId::COUNTER) {
+            for (const Card& extra : player.hand()) {
+                if (extra.get_identifier() == card.get_identifier()) {
+                    continue;
+                }
+                for (const StackItem& item : stack_.items()) {
+                    actions.push_back(Action{ActionType::CAST_COUNTER, player_index, card.get_identifier(),
+                                             extra.get_identifier(), item.stack_id, {}, {}});
+                }
+            }
+        } else if (pitch == AbilityId::SAVE) {
+            for (const Card& land : player.battlefield()) {
+                if (stack_.targets_card(land.get_identifier())) {
+                    actions.push_back(Action{ActionType::CAST_SAVE, player_index, card.get_identifier(),
+                                             std::nullopt, land.get_identifier(), {}, {}});
+                }
+            }
+        }
+    }
+    return actions;
+}
+
+std::vector<Action> LandGameMatch::main_phase_actions(int player_index) const {
+    std::vector<Action> actions;
+    const PlayerState& player = players_[player_index];
+    const PlayerState& opponent = players_[1 - player_index];
+
+    // deploys: the mandatory one, or the extra one a resolved Ramp granted
+    if (!played_land_ || ramp_available_) {
+        const bool ramped = played_land_;
+        for (const Card& card : player.hand()) {
+            const AbilityId ability = ramped ? AbilityId::NONE : get(card.get_land_type()).deploy_ability;
+
+            // candidate targets: no target, plus every card in the zone the ETB aims at
+            std::vector<std::optional<uint32_t>> candidates{std::nullopt};
+            const std::vector<Card>* zone = nullptr;
+            if (ability == AbilityId::DESTROY) { zone = &opponent.battlefield(); }
+            if (ability == AbilityId::FLICKER) { zone = &player.battlefield(); }
+            if (ability == AbilityId::RECLAIM) { zone = &graveyard_.cards(); }
+            if (zone != nullptr) {
+                for (const Card& target : *zone) {
+                    candidates.push_back(target.get_identifier());
+                }
+            }
+            for (const std::optional<uint32_t>& target : candidates) {
+                if (valid_deploy_target(player_index, ability, target)) {
+                    actions.push_back(Action{ActionType::PLAY_LAND, player_index, card.get_identifier(),
+                                             std::nullopt, target, {}, {}});
+                }
+            }
+        }
+    }
+
+    // the one optional main-phase pitch
+    if (!pitched_this_turn_) {
+        for (const Card& card : player.hand()) {
+            const LandDefinition& def = get(card.get_land_type());
+            if (def.pitch_timing != PitchTiming::MainPhase) {
+                continue;
+            }
+            if (def.pitch_ability == AbilityId::RUMMAGE) {
+                for (const Card& extra : player.hand()) {
+                    if (extra.get_identifier() != card.get_identifier()) {
+                        actions.push_back(Action{ActionType::PITCH_LAND, player_index, card.get_identifier(),
+                                                 extra.get_identifier(), std::nullopt, {}, {}});
+                    }
+                }
+            } else {
+                actions.push_back(Action{ActionType::PITCH_LAND, player_index, card.get_identifier(),
+                                         std::nullopt, std::nullopt, {}, {}});
+            }
+        }
+    }
+
+    actions.push_back(Action{ActionType::END_TURN, player_index, 0, std::nullopt, std::nullopt, {}, {}});
+    return actions;
 }
 
 bool LandGameMatch::game_over() const {
@@ -326,6 +504,7 @@ bool LandGameMatch::concede(int player_index) {
     if (player_index < 0 || player_index >= 2 || game_over()) {
         return false;
     }
+    record(Action{ActionType::CONCEDE, player_index, 0, std::nullopt, std::nullopt, {}, {}});
     end_game(GameEndReason::CONCEDE, 1 - player_index);
     return true;
 }
@@ -371,6 +550,7 @@ bool LandGameMatch::choose_card(int player_index, uint32_t card_id) {
         return false;
     }
 
+    record(Action{ActionType::CHOOSE_CARD, player_index, card_id, std::nullopt, std::nullopt, {}, {}});
     PlayerState& opponent = players_[1 - player_index];
     switch (type) {
         case ChoiceType::EXTRACT:
@@ -443,6 +623,8 @@ bool LandGameMatch::choose_surveil(int player_index, const std::vector<uint32_t>
             return false;
         }
     }
+
+    record(Action{ActionType::CHOOSE_SURVEIL, player_index, 0, std::nullopt, std::nullopt, to_graveyard, library_top_order});
 
     // the peeked cards are the top of the library: take them off, then place them
     for (size_t i = 0; i < options.size(); ++i) {
@@ -531,6 +713,7 @@ bool LandGameMatch::end_turn(int player_index) {
         return false;
     }
     // the deploy was required but the hand is empty (e.g. the last cards were pitched)
+    record(Action{ActionType::END_TURN, player_index, 0, std::nullopt, std::nullopt, {}, {}});
     if (!played_land_ && players_[player_index].hand_size() == 0) {
         end_game_by_tiebreak(GameEndReason::DEPLOY_LOCK);
         return true;

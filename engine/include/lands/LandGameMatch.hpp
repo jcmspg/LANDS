@@ -4,6 +4,7 @@
 #include "lands/PlayerState.hpp"
 #include "lands/WinEvaluator.hpp"
 #include "lands/Graveyard.hpp"
+#include "lands/Action.hpp"
 #include "lands/ActionStack.hpp"
 #include "lands/Choice.hpp"
 #include "lands/GameEnd.hpp"
@@ -65,6 +66,18 @@ class LandGameMatch {
         // hard cap is the end of round 25.
         static constexpr int kMaxRounds = 25;
 
+        // The action log and the generic entry point (GDD §6.3). Every accepted action is
+        // appended to the log; replaying the log against the same seed reproduces the match.
+        bool apply(const Action& action);
+        const std::vector<Action>& action_log() const;
+        static LandGameMatch replay(uint64_t seed, const std::vector<Action>& log);   // throws if the log is rejected
+
+        // Everything `player_index` may legally do right now, in a deterministic order. Empty
+        // unless it is their move (the choosing player, the priority holder, or the active
+        // player). Concede is always legal and is left out.
+        std::vector<Action> legal_actions(int player_index) const;
+        bool deploy_due() const;            // the active player still owes their mandatory deploy
+
         bool game_over() const;
         int winner_player() const;          // -1 while running and after a true draw
         GameEndReason end_reason() const;
@@ -115,7 +128,13 @@ class LandGameMatch {
         PendingChoice pending_choice_;
         bool is_saved(const std::optional<uint32_t>& card_id) const;
         void retrigger_etb(int caster_index, AbilityId ability);   // flickered ETB: fresh choices, no window
-        bool action_blocked() const;   // a window or a choice is pending
+        bool action_blocked() const;
+        std::vector<Action> choice_actions(int player_index) const;
+        std::vector<Action> priority_actions(int player_index) const;
+        std::vector<Action> main_phase_actions(int player_index) const;
+
+        std::vector<Action> action_log_;
+        void record(Action action);   // a window or a choice is pending
         std::vector<uint32_t> countered_ids_;   // stack ids countered during this resolution
         std::vector<uint32_t> saved_card_ids_;  // lands saved during this resolution
         bool valid_deploy_target(int caster_index, AbilityId ability,

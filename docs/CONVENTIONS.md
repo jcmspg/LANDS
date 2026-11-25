@@ -47,6 +47,7 @@ Rules of thumb:
 - Determinism: matches are built from a fixed seed (`LandGameMatch match(12345);`). To act on a card, read its id from `match.hand(player)`. When a test needs exact hands or a specific library (deck-out, deploy lock, Surveil peeks), build a stacked match with `LandGameMatch(Deck({...}))` (the last card is the top; P1 is dealt the top 5, P2 the next 6) instead of searching seeds. If a test needs a specific land type in hand, search the hand (or try other seeds) with a small helper in the test file rather than making the engine expose more internals. Don't use `rand()`, wall-clock time, or sleeps.
 - Test small helpers go in an anonymous namespace at the top of the test file.
 - Keep tests independent; no shared mutable state between `TEST`s.
+- Cross-cutting invariants (legal actions vs. accepted actions, termination, replay determinism) live in `test_MatchProperties.cpp` and run whole random games; per-rule tests stay in `test_LandGameMatch.cpp`.
 
 ## Commits
 

@@ -26,6 +26,7 @@ class ActionStack {
         void push(StackItem item);
         StackItem pop();                 // throw if empty
         const StackItem& top() const;    // throw if empty
+        const std::vector<StackItem>& items() const;    // bottom first
         bool empty() const;
         bool contains(uint32_t stack_id) const;
         bool targets_card(uint32_t card_id) const;   // does any item target this card?

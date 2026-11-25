@@ -230,6 +230,10 @@ bool play_settled(LandGameMatch& match, int player_index, uint32_t card_id,
     return played;
 }
 
+bool contains_type(const std::vector<Action>& actions, ActionType type) {
+    return std::any_of(actions.begin(), actions.end(), [type](const Action& action) { return action.type == type; });
+}
+
 // A card whose deploy needs no target and opens no choice right now: not an Island (Draw
 // changes hand sizes) or Swamp (Extract pauses for a choice), not a Mountain while the opponent
 // has lands, not a Forest while the graveyard has cards, not a Plains while you control a land.
@@ -1779,6 +1783,131 @@ TEST(LandGameMatch, PitchingTheLastCardLocksTheDeploy) {
     EXPECT_TRUE(match.game_over());
     EXPECT_EQ(match.end_reason(), GameEndReason::DEPLOY_LOCK);
     EXPECT_EQ(match.winner_player(), 0);                            // 4 Forests vs. an empty board
+}
+
+TEST(LandGameMatch, ActionLogRecordsAcceptedActionsInOrder) {
+    LandGameMatch match = make_stacked_match({LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::MOUNTAIN},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(10, LandType::MOUNTAIN));
+    EXPECT_TRUE(match.action_log().empty());
+
+    EXPECT_FALSE(match.play_land(0, 9999));                         // rejected: not logged
+    EXPECT_FALSE(match.end_turn(1));
+    EXPECT_TRUE(match.pitch_land(0, 0));                            // Forest -> Ramp
+    EXPECT_TRUE(match.play_land(0, 4));                             // the Mountain: nothing to destroy yet
+    EXPECT_TRUE(match.end_turn(0));
+
+    const std::vector<Action> expected{
+        Action{ActionType::PITCH_LAND, 0, 0, std::nullopt, std::nullopt, {}, {}},
+        Action{ActionType::PLAY_LAND, 0, 4, std::nullopt, std::nullopt, {}, {}},
+        Action{ActionType::END_TURN, 0, 0, std::nullopt, std::nullopt, {}, {}},
+    };
+    EXPECT_EQ(match.action_log(), expected);
+}
+
+TEST(LandGameMatch, ActionLogRecordsTargetsCostsAndAnswers) {
+    LandGameMatch match = make_stacked_match({LandType::MOUNTAIN, LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::FOREST), std::vector<LandType>(10, LandType::FOREST));
+    ASSERT_TRUE(match.pitch_land(0, 0, 4));                         // Mountain Rummage, discarding card 4
+    ASSERT_TRUE(match.play_land(0, 1));                             // Swamp: Extract is pending
+    ASSERT_TRUE(match.choose_card(0, 6));
+    ASSERT_TRUE(match.concede(1));
+
+    ASSERT_EQ(match.action_log().size(), 4);
+    EXPECT_EQ(match.action_log()[0], (Action{ActionType::PITCH_LAND, 0, 0, 4u, std::nullopt, {}, {}}));
+    EXPECT_EQ(match.action_log()[2], (Action{ActionType::CHOOSE_CARD, 0, 6, std::nullopt, std::nullopt, {}, {}}));
+    EXPECT_EQ(match.action_log()[3].type, ActionType::CONCEDE);
+}
+
+TEST(LandGameMatch, ApplyDispatchesToTheMatchingAction) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    EXPECT_FALSE(match.apply(Action{ActionType::PLAY_LAND, 1, 5, std::nullopt, std::nullopt, {}, {}}));  // not P2's turn
+    EXPECT_FALSE(match.apply(Action{ActionType::CAST_COUNTER, 0, 0, std::nullopt, 1u, {}, {}}));         // missing the extra card
+    EXPECT_FALSE(match.apply(Action{ActionType::CAST_SAVE, 0, 0, std::nullopt, std::nullopt, {}, {}}));  // missing the land
+    EXPECT_TRUE(match.apply(Action{ActionType::PLAY_LAND, 0, 0, std::nullopt, std::nullopt, {}, {}}));
+    EXPECT_EQ(match.land_count(0, LandType::FOREST), 1);
+    EXPECT_TRUE(match.apply(Action{ActionType::END_TURN, 0, 0, std::nullopt, std::nullopt, {}, {}}));
+    EXPECT_EQ(match.active_player(), 1);
+}
+
+TEST(LandGameMatch, DeployDueUntilTheDeployIsMade) {
+    LandGameMatch match = make_stacked_match(std::vector<LandType>(5, LandType::FOREST),
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    EXPECT_TRUE(match.deploy_due());
+    ASSERT_TRUE(match.play_land(0, 0));
+    EXPECT_FALSE(match.deploy_due());
+    ASSERT_TRUE(match.end_turn(0));
+    EXPECT_TRUE(match.deploy_due());                                // P2 owes its deploy now
+    ASSERT_TRUE(match.concede(0));
+    EXPECT_FALSE(match.deploy_due());                               // nothing is due once the game is over
+}
+
+TEST(LandGameMatch, LegalActionsAtTheStartOfAMatch) {
+    LandGameMatch match = make_stacked_match({LandType::FOREST, LandType::FOREST, LandType::MOUNTAIN, LandType::SWAMP, LandType::ISLAND},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+
+    EXPECT_TRUE(match.legal_actions(1).empty());                    // not P2's move
+    const std::vector<Action> legal = match.legal_actions(0);
+    auto count = [&](ActionType type) {
+        return std::count_if(legal.begin(), legal.end(), [type](const Action& a) { return a.type == type; });
+    };
+    EXPECT_EQ(count(ActionType::PLAY_LAND), 5);                     // no target exists yet, so one deploy per card
+    EXPECT_EQ(count(ActionType::PITCH_LAND), 2 + 4 + 1);            // Forest x2 (Ramp), Mountain (4 discards), Swamp (Surveil); Island is reactive
+    EXPECT_EQ(count(ActionType::END_TURN), 1);
+    EXPECT_EQ(legal.size(), 5 + 7 + 1);
+    EXPECT_THROW(match.legal_actions(2), std::out_of_range);
+    EXPECT_THROW(match.legal_actions(-1), std::out_of_range);
+}
+
+TEST(LandGameMatch, LegalActionsOfAPriorityWindow) {
+    LandGameMatch match = make_match_where_only_p1_can_counter();
+    ASSERT_TRUE(match.play_land(0, plain_card_id(match, 0)));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_TRUE(match.legal_actions(0).empty());                    // the pusher waits
+    const std::vector<Action> legal = match.legal_actions(1);
+    EXPECT_TRUE(contains_type(legal, ActionType::PASS_PRIORITY));
+    EXPECT_TRUE(contains_type(legal, ActionType::CAST_COUNTER));
+    EXPECT_FALSE(contains_type(legal, ActionType::PLAY_LAND));
+    EXPECT_FALSE(contains_type(legal, ActionType::END_TURN));
+    for (const Action& action : legal) {
+        if (action.type == ActionType::CAST_COUNTER) {
+            EXPECT_EQ(*action.target_id, match.stack_top().stack_id);   // the only item on the stack
+        }
+    }
+}
+
+TEST(LandGameMatch, LegalActionsOfAPendingChoice) {
+    LandGameMatch match = make_stacked_match({LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN), {});
+    ASSERT_TRUE(match.play_land(0, 0));
+    ASSERT_EQ(match.choice_type(), ChoiceType::EXTRACT);
+
+    EXPECT_TRUE(match.legal_actions(1).empty());
+    const std::vector<Action> legal = match.legal_actions(0);
+    EXPECT_EQ(legal.size(), 6);                                     // one pick per card in P2's hand
+    for (const Action& action : legal) {
+        EXPECT_EQ(action.type, ActionType::CHOOSE_CARD);
+    }
+}
+
+TEST(LandGameMatch, LegalSurveilAnswersCoverEveryPartition) {
+    LandGameMatch match = make_stacked_match({LandType::SWAMP, LandType::FOREST, LandType::FOREST, LandType::FOREST, LandType::FOREST},
+                                             std::vector<LandType>(6, LandType::MOUNTAIN),
+                                             std::vector<LandType>(5, LandType::PLAINS));
+    ASSERT_TRUE(match.pitch_land(0, 0));
+    ASSERT_EQ(match.choice_type(), ChoiceType::SURVEIL);
+
+    // 2 peeked cards: bin both, bin either one, or keep both in either order = 5 answers
+    EXPECT_EQ(match.legal_actions(0).size(), 5);
+}
+
+TEST(LandGameMatch, NoLegalActionsOnceTheGameIsOver) {
+    LandGameMatch match(12345);
+    ASSERT_TRUE(match.concede(0));
+    EXPECT_TRUE(match.legal_actions(0).empty());
+    EXPECT_TRUE(match.legal_actions(1).empty());
 }
 
 } // namespace lands
