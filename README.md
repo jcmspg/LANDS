@@ -13,23 +13,23 @@ This repository is a learning project: a bit-by-bit build of a rules engine, net
 | Area | State |
 | :--- | :--- |
 | **Game design** | Finalized ruleset in the GDD (v2.1.0) |
-| **Phase 1 — C++ rules engine** | **In progress** — foundations under `engine/` |
+| **Phase 1 — C++ rules engine** | **Nearly done** — full ruleset, action log / replay and a bot simulation harness under `engine/`; the P1/P2 compensation-config comparison is the main thing left (see `docs/ENGINE_STATUS.md`) |
 | **Phases 2–5** (server, Godot client, auth, deploy) | Planned — not started |
 
 ### What’s implemented now (`engine/`)
 
-Early Phase 1 scaffolding with CMake + GoogleTest:
+CMake + GoogleTest. The rules are complete per the GDD; `docs/ENGINE_STATUS.md` is the detailed, up-to-date tracker.
 
-- **`LandType`** — Plains, Island, Swamp, Mountain, Forest
-- **`Card`** — land type + stable instance id
-- **`Deck`** — 50-card shared library (10 of each type), seeded shuffle, draw, put-on-top
-- **`WinEvaluator`** — count-based **Domain** / **Mono** checks
-- **`PlayerState`** — hand + per-type battlefield counts; draw and play land
-- **`LandGameMatch`** — seeded shuffle, opening deal (P1: 5 / P2: 6), play land, win check after play
-
-Not yet in the engine (still ahead in Phase 1): pitch/ETB effects, LIFO stack & priority, shared graveyard, turn structure/timers, action log / replay, bot stress harness.
+- **Cards & zones** — `Card` (land type + opaque instance id), seeded-shuffle `Deck`, `PlayerState` (hand, battlefield), shared `Graveyard`
+- **Stack & priority** — LIFO `ActionStack`; the opponent of every push gets a priority window; Island **Counter** (counter wars, Memory Lapse) and Plains **Save**
+- **All ten abilities** — five deploy ETBs (Flicker, Draw, Extract, Destroy, Reclaim) and five pitches (Save, Counter, Surveil, Rummage, Ramp), with targets declared up front and hidden-information choices (Extract, Surveil, flickered ETBs) as pause-and-answer prompts
+- **Match flow** — turns, mandatory-deploy bookkeeping, Domain / Mono wins, concede, deploy lock, turn-50 cap and tiebreak
+- **Determinism** — every accepted `Action` goes in an append-only log; `replay(seed, log)` reproduces a match bit-for-bit (`state_digest()` checks it)
+- **Timers & strikes** — main-phase / priority / choice timeout events, AFK strikes and forfeits (the clocks themselves belong to the future server)
+- **Bots** — `legal_actions()` plus a `RandomBot`, driving `lands_sim`, a harness that plays thousands of matches and checks termination and replay (`./engine/build/lands_sim --matches 10000`)
 
 ---
+
 
 ## Core gameplay (high level)
 
@@ -65,11 +65,14 @@ The long-term split is strict: **C++ owns all game state**; the Godot client ren
 .
 ├── GameDesignDocument.md   # Full rules & architecture (source of truth)
 ├── README.md
+├── CLAUDE.md               # Guidance for Claude Code working in this repo
+├── docs/                   # CONVENTIONS.md (style, tests), ENGINE_STATUS.md (status & roadmap)
 └── engine/                 # Phase 1 C++ rules engine
     ├── CMakeLists.txt
     ├── include/lands/      # Public headers
     ├── src/                # Implementations
-    └── tests/              # GoogleTest suites
+    ├── tests/              # GoogleTest suites
+    └── sim/                # lands_sim: the bot simulation harness
 ```
 
 Client, server gateway, and deploy configs will land in later phases.

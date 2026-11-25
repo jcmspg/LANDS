@@ -2087,4 +2087,35 @@ TEST(LandGameMatch, TimerPicksAreDeterministicPerSeed) {
     EXPECT_EQ(ids_of(a.battlefield(0)), ids_of(b.battlefield(0)));
 }
 
+TEST(LandGameMatch, StateDigestMatchesForIdenticalMatches) {
+    LandGameMatch a(31);
+    LandGameMatch b(31);
+    EXPECT_EQ(a.state_digest(), b.state_digest());
+    EXPECT_NE(a.state_digest(), LandGameMatch(32).state_digest());
+}
+
+TEST(LandGameMatch, StateDigestChangesWithEveryObservableChange) {
+    LandGameMatch match = make_stacked_match({LandType::FOREST, LandType::FOREST, LandType::MOUNTAIN, LandType::SWAMP, LandType::ISLAND},
+                                             std::vector<LandType>(6, LandType::FOREST), std::vector<LandType>(10, LandType::FOREST));
+    std::set<uint64_t> seen{match.state_digest()};
+
+    ASSERT_TRUE(match.pitch_land(0, 0));                            // Ramp: hand, graveyard, flags
+    EXPECT_TRUE(seen.insert(match.state_digest()).second);
+    ASSERT_TRUE(match.play_land(0, 2));                             // a deploy: battlefield
+    EXPECT_TRUE(seen.insert(match.state_digest()).second);
+    ASSERT_TRUE(match.main_phase_timeout(0));                       // the deploy is done: the turn ends, +1 strike
+    EXPECT_TRUE(seen.insert(match.state_digest()).second);
+    ASSERT_TRUE(match.concede(1));                                  // the result
+    EXPECT_TRUE(seen.insert(match.state_digest()).second);
+}
+
+TEST(LandGameMatch, StateDigestSeesLibraryOrder) {
+    // same cards in the same zones, but the library is stacked in a different order
+    LandGameMatch a = make_stacked_match(std::vector<LandType>(5, LandType::FOREST), std::vector<LandType>(6, LandType::FOREST),
+                                         {LandType::PLAINS, LandType::ISLAND});
+    LandGameMatch b = make_stacked_match(std::vector<LandType>(5, LandType::FOREST), std::vector<LandType>(6, LandType::FOREST),
+                                         {LandType::ISLAND, LandType::PLAINS});
+    EXPECT_NE(a.state_digest(), b.state_digest());
+}
+
 } // namespace lands

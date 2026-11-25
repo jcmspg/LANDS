@@ -78,7 +78,12 @@ class LandGameMatch {
         // unless it is their move (the choosing player, the priority holder, or the active
         // player). Concede is always legal and is left out.
         std::vector<Action> legal_actions(int player_index) const;
-        bool deploy_due() const;            // the active player still owes their mandatory deploy
+        bool deploy_due() const;
+
+        // One hash over everything observable: zones (library order included), board counts,
+        // turn bookkeeping, strikes and the result. Equal digests mean identical matches, which
+        // is how the replay guarantee is checked cheaply.
+        uint64_t state_digest() const;            // the active player still owes their mandatory deploy
 
         bool game_over() const;
         int winner_player() const;          // -1 while running and after a true draw

@@ -1,4 +1,5 @@
 #include "lands/LandGameMatch.hpp"
+#include "lands/RandomBot.hpp"
 
 #include <gtest/gtest.h>
 
@@ -77,48 +78,24 @@ void expect_legal_actions_are_exact(const LandGameMatch& match, int player) {
     }
 }
 
-// Plays one game to the end with uniformly random legal actions (preferring the mandatory deploy).
-// Returns how many times each action type was applied.
+// Plays one game to the end with the shared random bot, running the brute-force oracle on every
+// `check_every`-th step. Returns how many times each action type was applied.
 std::map<ActionType, int> play_random_game(uint64_t seed, LandGameMatch& match, int check_every,
-                                           int timer_percent = 0) {
-    std::mt19937_64 rng(seed * 7919 + 1);
-    std::map<ActionType, int> applied;
-
-    for (int step = 0; step < 5000 && !match.game_over(); ++step) {
-        const std::vector<Action> first = match.legal_actions(0);
-        const std::vector<Action> second = match.legal_actions(1);
-        EXPECT_NE(first.empty(), second.empty()) << "exactly one player may act";
-        const int mover = first.empty() ? 1 : 0;
-        std::vector<Action> options = first.empty() ? second : first;
-
+                                           int timer_percent = 0, int idle_percent = 0) {
+    RandomBot bot(seed, timer_percent, idle_percent);
+    for (int step = 0; step < 20000 && !match.game_over(); ++step) {
+        const bool first_can_act = !match.legal_actions(0).empty();
+        const bool second_can_act = !match.legal_actions(1).empty();
+        EXPECT_NE(first_can_act, second_can_act) << "exactly one player may act";
         if (check_every > 0 && step % check_every == 0) {
-            expect_legal_actions_are_exact(match, mover);
+            expect_legal_actions_are_exact(match, first_can_act ? 0 : 1);
         }
+        EXPECT_TRUE(bot.step(match));
+    }
 
-        if (match.deploy_due() && match.active_player() == mover) {
-            std::vector<Action> deploys;
-            std::copy_if(options.begin(), options.end(), std::back_inserter(deploys),
-                         [](const Action& action) { return action.type == ActionType::PLAY_LAND; });
-            if (!deploys.empty()) {
-                options = deploys;
-            }
-        }
-        // sometimes the mover's clock runs out instead (the timer that is running for them)
-        if (timer_percent > 0 && static_cast<int>(rng() % 100) < timer_percent) {
-            ActionType timeout = ActionType::MAIN_PHASE_TIMEOUT;
-            if (match.choice_player() == mover) {
-                timeout = ActionType::CHOICE_TIMEOUT;
-            } else if (match.priority_player() == mover) {
-                timeout = ActionType::PRIORITY_TIMEOUT;
-            }
-            EXPECT_TRUE(match.apply(Action{timeout, mover, 0, std::nullopt, std::nullopt, {}, {}}));
-            ++applied[timeout];
-            continue;
-        }
-
-        const Action& chosen = options[std::uniform_int_distribution<size_t>(0, options.size() - 1)(rng)];
-        EXPECT_TRUE(match.apply(chosen));
-        ++applied[chosen.type];
+    std::map<ActionType, int> applied;
+    for (const Action& action : match.action_log()) {
+        ++applied[action.type];
     }
     return applied;
 }
@@ -195,6 +172,7 @@ TEST(MatchProperties, ReplayingTheLogReproducesMatchesWithTimerEvents) {
 
         const LandGameMatch replayed = LandGameMatch::replay(seed, match.action_log());
         EXPECT_EQ(snapshot_of(replayed), snapshot_of(match)) << "seed " << seed;
+        EXPECT_EQ(replayed.state_digest(), match.state_digest()) << "seed " << seed;
         EXPECT_EQ(replayed.action_log(), match.action_log());
         forfeits += match.end_reason() == GameEndReason::AFK_FORFEIT;
     }
@@ -215,6 +193,20 @@ TEST(MatchProperties, TimerEventsNeverBreakTermination) {
     EXPECT_GT(totals[ActionType::MAIN_PHASE_TIMEOUT], 0);
     EXPECT_GT(totals[ActionType::PRIORITY_TIMEOUT], 0);
     EXPECT_GT(totals[ActionType::CHOICE_TIMEOUT], 0);
+}
+
+TEST(MatchProperties, StallingGamesReachTheTurnCapAndDeckOut) {
+    std::map<GameEndReason, int> endings;
+    for (uint64_t seed = 1; seed <= 150; ++seed) {
+        LandGameMatch match(seed);
+        play_random_game(seed, match, 0, 0, 85);
+        ASSERT_TRUE(match.game_over()) << "seed " << seed;
+        ++endings[match.end_reason()];
+
+        const LandGameMatch replayed = LandGameMatch::replay(seed, match.action_log());
+        EXPECT_EQ(replayed.state_digest(), match.state_digest()) << "seed " << seed;
+    }
+    EXPECT_GT(endings[GameEndReason::TURN_CAP], 0);
 }
 
 TEST(MatchProperties, ReplayRejectsACorruptLog) {

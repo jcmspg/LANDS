@@ -10,7 +10,7 @@ This is a learning project built in phases (see README.md "Development phases" a
 
 **`GameDesignDocument.md` (GDD, currently v2.1.0) is the single source of truth for rules, protocol, and architecture.** If README.md or code comments disagree with it, the GDD wins. Read the GDD sections relevant to whatever mechanic you're touching before changing engine behavior — it specifies exact edge cases (e.g. Plains anti-loop rule, Memory Lapse semantics, Forest ramp being vanilla) that are easy to get subtly wrong.
 
-**Important gap to keep in mind:** the GDD describes the *finished* Phase 1 engine (full LIFO stack with reactive priority windows, timers, AFK strikes, action log replay, all five card abilities). The current code in `engine/` is an earlier slice of that: deploys, the main-phase pitches Ramp and Rummage, Island's Draw ETB, the priority window, and Island Counter (see `docs/ENGINE_STATUS.md` for the exact state). All five deploy ETBs and all five pitches are in (Destroy, Save, Reclaim, Extract, Surveil and Flicker via a pause-and-answer choice mechanism). Game end (win, concede, deploy lock, turn cap with tiebreak) is in too. The action log (`apply`, `action_log`, `replay`), `legal_actions`, and the timer-event effects (auto-deploy, random choice, AFK strikes) exist. The simulation harness does not yet. When implementing a new mechanic, check what's actually in `engine/src` rather than assuming the GDD's full design is already live.
+**Important gap to keep in mind:** the GDD describes the *finished* Phase 1 engine (full LIFO stack with reactive priority windows, timers, AFK strikes, action log replay, all five card abilities). The current code in `engine/` is an earlier slice of that: deploys, the main-phase pitches Ramp and Rummage, Island's Draw ETB, the priority window, and Island Counter (see `docs/ENGINE_STATUS.md` for the exact state). All five deploy ETBs and all five pitches are in (Destroy, Save, Reclaim, Extract, Surveil and Flicker via a pause-and-answer choice mechanism). Game end (win, concede, deploy lock, turn cap with tiebreak) is in too. The action log (`apply`, `action_log`, `replay`), `legal_actions`, and the timer-event effects (auto-deploy, random choice, AFK strikes) exist. A `RandomBot` and the `lands_sim` harness (`engine/sim/`) exist; the compensation-configuration comparison does not yet. When implementing a new mechanic, check what's actually in `engine/src` rather than assuming the GDD's full design is already live.
 
 ## Working agreement
 
@@ -39,6 +39,7 @@ From the repo root:
 cmake -S engine -B engine/build
 cmake --build engine/build
 ctest --test-dir engine/build --output-on-failure
+./engine/build/lands_sim --matches 10000    # simulation harness (also runs under ctest as simulation_*)
 ```
 
 Run a single test suite binary directly (built under `engine/build/`), e.g.:

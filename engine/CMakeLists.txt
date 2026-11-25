@@ -18,6 +18,7 @@ add_library(lands STATIC
     src/LandRules.cpp
     src/Graveyard.cpp
     src/ActionStack.cpp
+    src/RandomBot.cpp
 )
 
 target_include_directories(lands PUBLIC
@@ -60,6 +61,10 @@ add_executable(test_MatchProperties
     tests/test_MatchProperties.cpp
 )
 
+add_executable(test_RandomBot
+    tests/test_RandomBot.cpp
+)
+
 target_link_libraries(test_WinEvaluator PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
@@ -92,6 +97,16 @@ target_link_libraries(test_MatchProperties PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
 
+target_link_libraries(test_RandomBot PRIVATE
+    lands GTest::gtest GTest::gtest_main
+)
+
+# simulation harness (GDD Phase 1 test criterion)
+add_executable(lands_sim
+    sim/simulate.cpp
+)
+target_link_libraries(lands_sim PRIVATE lands)
+
 include(GoogleTest)
 gtest_discover_tests(test_WinEvaluator)
 gtest_discover_tests(test_Deck)
@@ -101,3 +116,7 @@ gtest_discover_tests(test_LandRules)
 gtest_discover_tests(test_Graveyard)
 gtest_discover_tests(test_ActionStack)
 gtest_discover_tests(test_MatchProperties)
+gtest_discover_tests(test_RandomBot)
+
+add_test(NAME simulation_smoke COMMAND lands_sim --matches 500)
+add_test(NAME simulation_stalling COMMAND lands_sim --matches 100 --idle-percent 85 --timer-percent 2)

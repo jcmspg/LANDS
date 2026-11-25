@@ -461,6 +461,47 @@ LandGameMatch LandGameMatch::replay(uint64_t seed, const std::vector<Action>& lo
     return match;
 }
 
+uint64_t LandGameMatch::state_digest() const {
+    uint64_t hash = 1469598103934665603ULL;     // FNV-1a
+    auto mix = [&hash](uint64_t value) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            hash ^= (value >> shift) & 0xFFu;
+            hash *= 1099511628211ULL;
+        }
+    };
+    auto mix_cards = [&](const std::vector<Card>& cards) {
+        mix(cards.size());
+        for (const Card& card : cards) {
+            mix(card.get_identifier());
+            mix(static_cast<uint64_t>(card.get_land_type()));
+        }
+    };
+
+    for (const PlayerState& player : players_) {
+        mix_cards(player.hand());
+        mix_cards(player.battlefield());
+    }
+    mix_cards(deck_.peek_top(deck_.deck_size()));
+    mix_cards(graveyard_.cards());
+    for (const StackItem& item : stack_.items()) {
+        mix(item.stack_id);
+        mix(static_cast<uint64_t>(item.ability));
+        mix(item.card.get_identifier());
+        mix(item.target_card_id.value_or(0xFFFFFFFFu));
+    }
+    mix_cards(pending_choice_.options);
+    for (uint64_t value : {static_cast<uint64_t>(active_player_), static_cast<uint64_t>(turn_number_),
+                           static_cast<uint64_t>(played_land_), static_cast<uint64_t>(pitched_this_turn_),
+                           static_cast<uint64_t>(ramp_available_), static_cast<uint64_t>(priority_player_ + 1),
+                           static_cast<uint64_t>(pending_choice_.type), static_cast<uint64_t>(pending_choice_.player + 1),
+                           static_cast<uint64_t>(afk_strikes_[0]), static_cast<uint64_t>(afk_strikes_[1]),
+                           static_cast<uint64_t>(end_reason_), static_cast<uint64_t>(winner_player_ + 1),
+                           static_cast<uint64_t>(next_stack_id_)}) {
+        mix(value);
+    }
+    return hash;
+}
+
 bool LandGameMatch::deploy_due() const {
     return !game_over() && !played_land_ && players_[active_player_].hand_size() > 0;
 }
