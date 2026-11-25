@@ -111,5 +111,20 @@ TEST(Deck, PutOnTop) {
     EXPECT_EQ(deck.deck_size(), Deck::deck_size_ + 1);
 }
 
+TEST(Deck, StackedDeckDrawsTopCardFirst) {
+    Deck deck({Card(LandType::PLAINS, 1), Card(LandType::ISLAND, 2), Card(LandType::SWAMP, 3)});
+    EXPECT_EQ(deck.deck_size(), 3);
+    EXPECT_EQ(deck.peek_top(1)[0], Card(LandType::SWAMP, 3));   // back() is the top
+    EXPECT_EQ(deck.draw(), Card(LandType::SWAMP, 3));
+    EXPECT_EQ(deck.draw(), Card(LandType::ISLAND, 2));
+    EXPECT_EQ(deck.draw(), Card(LandType::PLAINS, 1));
+    EXPECT_THROW(deck.draw(), std::runtime_error);
+}
+
+TEST(Deck, EmptyStackedDeck) {
+    Deck deck(std::vector<Card>{});
+    EXPECT_EQ(deck.deck_size(), 0);
+    EXPECT_THROW(deck.draw(), std::runtime_error);
+}
 
 } // namespace lands

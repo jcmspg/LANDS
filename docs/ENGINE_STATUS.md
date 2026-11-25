@@ -7,6 +7,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Area | State | GDD |
 | :--- | :--- | :--- |
 | Shared 50-card deck, seeded shuffle, random opaque instance ids | done | §3.1, §6.3 |
+| Stacked-deck constructors (`Deck(vector<Card>)`, `LandGameMatch(Deck)`) for tests, replays, and the balance-configuration simulation | done | §10 |
 | Deal 5 / 6; P1 skips only its turn-1 draw, P2 draws normally on its first turn; an empty library skips draw steps instead of throwing | done | §3.1, §3.2 |
 | Turn bookkeeping, one deploy per turn | done | §3.2 |
 | Deploy and pitch through the stack; priority window for the pusher's opponent (`priority_player`, `pass_priority`); auto-pass when the opponent cannot respond | done | §4.2, §4.3 |

@@ -303,6 +303,31 @@ TEST(LandGameMatch, InitialState) {
     EXPECT_EQ(match.graveyard_size(), 0);
 }
 
+TEST(LandGameMatch, StackedDeckIsDealtExactlyAsGiven) {
+    // 11 cards for the opening hands: P1 takes the top 5, P2 the next 6, then 2 stay in the library
+    std::vector<Card> cards;
+    for (uint32_t id = 0; id < 13; ++id) {
+        cards.push_back(Card(static_cast<LandType>(id % 5), id));
+    }
+    LandGameMatch match{Deck(cards)};
+
+    EXPECT_EQ(match.hand_size(0), 5);
+    EXPECT_EQ(match.hand_size(1), 6);
+    EXPECT_EQ(match.deck_size(), 2);
+    EXPECT_EQ(match.hand(0)[0], Card(static_cast<LandType>(12 % 5), 12));   // back() is the top
+    EXPECT_EQ(match.hand(0)[4], Card(static_cast<LandType>(8 % 5), 8));
+    EXPECT_EQ(match.hand(1)[0], Card(static_cast<LandType>(7 % 5), 7));
+    EXPECT_EQ(match.hand(1)[5], Card(static_cast<LandType>(2 % 5), 2));
+}
+
+TEST(LandGameMatch, SeededConstructorStillShufflesTheFullDeck) {
+    LandGameMatch a(12345);
+    LandGameMatch b(12345);
+    EXPECT_EQ(ids_of(a.hand(0)), ids_of(b.hand(0)));            // deterministic per seed
+    EXPECT_EQ(ids_of(a.hand(1)), ids_of(b.hand(1)));
+    EXPECT_EQ(a.deck_size(), 39);
+}
+
 TEST(LandGameMatch, TurnManagement) {
 
     LandGameMatch match2(42);

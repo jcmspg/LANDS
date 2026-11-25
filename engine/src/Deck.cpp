@@ -3,6 +3,7 @@
 #include <numeric>
 #include <random>
 #include <stdexcept>
+#include <utility>
 
 namespace lands {
 
@@ -15,6 +16,8 @@ Deck::Deck() : cards_() {
         }
     }
 }
+
+Deck::Deck(std::vector<Card> cards) : cards_(std::move(cards)) {}
 
 size_t Deck::deck_size() const {
     return cards_.size();

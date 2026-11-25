@@ -15,6 +15,7 @@ namespace lands {
 class LandGameMatch {
     public:
         explicit LandGameMatch(uint64_t seed);   // shuffle + deal
+        explicit LandGameMatch(Deck deck);       // deal from the deck exactly as stacked (tests, replays)
 
         // target_card_id is declared up front. Mountain's Destroy: an opponent land;
         // Forest's Reclaim: a card in the shared graveyard; Plains' Flicker: another

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace lands {
 
@@ -29,11 +30,17 @@ const Card* find_card(const std::vector<Card>& hand, uint32_t card_id) {
     return it == hand.end() ? nullptr : &*it;
 }
 
+Deck shuffled_deck(uint64_t seed) {
+    Deck deck;
+    deck.shuffle(seed);
+    return deck;
+}
+
 } // namespace
 
-LandGameMatch::LandGameMatch(uint64_t seed) {
-    deck_.shuffle(seed);
-    
+LandGameMatch::LandGameMatch(uint64_t seed) : LandGameMatch(shuffled_deck(seed)) {}
+
+LandGameMatch::LandGameMatch(Deck deck) : deck_(std::move(deck)) {
     deal_to(players_[0], 5);
     deal_to(players_[1], 6);
 }

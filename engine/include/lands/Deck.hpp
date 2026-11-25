@@ -17,6 +17,7 @@ class Deck {
 
 
         Deck();
+        explicit Deck(std::vector<Card> cards);   // a stacked library: back() is the top card
         ~Deck() = default;
 
         size_t deck_size() const;
