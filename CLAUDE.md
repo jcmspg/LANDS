@@ -12,6 +12,23 @@ This is a learning project built in phases (see README.md "Development phases" a
 
 **Important gap to keep in mind:** the GDD describes the *finished* Phase 1 engine (full LIFO stack with reactive priority windows, timers, AFK strikes, action log replay, all five card abilities). The current code in `engine/` is an earlier slice of that: deploy-only lands with no pitch abilities wired up yet, and `LandGameMatch::resolve_top_action` pops and resolves the stack immediately after every push rather than opening a priority window. When implementing a new mechanic, check what's actually in `engine/src` rather than assuming the GDD's full design is already live.
 
+## Working agreement
+
+Read these before changing code:
+
+- `docs/CONVENTIONS.md` — code style, error-handling split, GoogleTest etiquette, commit rules. Match it exactly; don't restyle untouched code.
+- `docs/ENGINE_STATUS.md` — what is built vs. the GDD, known deviations, open decisions, and the slice roadmap. Update it in the same commit that changes the status.
+
+Process rules:
+
+1. **Read first.** Before touching a mechanic, read its GDD section and the code in `engine/src` that it will touch. Check what actually exists; don't assume the GDD's finished design is live.
+2. **One slice at a time.** Work one roadmap slice (see `ENGINE_STATUS.md`). Don't start the next slice, and don't refactor unrelated code, in the same change.
+3. **Tests with the behavior.** Every new rule ships with GoogleTest cases: happy path, each rejection path, each applicable §3.5 edge case. A bug fix ships with a regression test that fails on the old code.
+4. **Verify before reporting done.** Build and run the full suite (`ctest`) and say what was actually run. If the build tooling is unavailable, say so rather than claiming a pass.
+5. **Separate commits.** Bug fixes, features, and doc changes are separate commits. Don't commit or push unless asked.
+6. **Ask on design forks.** If the GDD is ambiguous or two reasonable API shapes exist (e.g. hand indices vs. instance IDs), surface the choice instead of picking silently, and record the outcome in `ENGINE_STATUS.md`.
+7. **Update the docs** (`ENGINE_STATUS.md`, and this file if architecture changes) when reality changes. The GDD itself is only edited when the user decides a rule changes.
+
 ## Build & test
 
 Requirements: C++20 compiler, CMake ≥ 3.20, GoogleTest discoverable via `find_package(GTest REQUIRED)`.
@@ -51,7 +68,7 @@ Core object graph, bottom-up:
 - **`Graveyard`** — the single shared discard pile; `take_card(index)` is the hook Forest's Reclaim will use.
 - **`ActionStack`** — a bare LIFO `vector<StackItem>` (push/pop/top). It does not yet enforce the GDD's fixed stack grammar (one sorcery-speed bottom item + a chain of reactive pitches) or open priority windows — that logic still needs to be layered on in `LandGameMatch`.
 - **`WinEvaluator`** — pure function over a player's `land_counts()` returning `NONE` / `DOMAIN` / `MONO`.
-- **`LandGameMatch`** — the top-level match object owning both `PlayerState`s, the shared `Deck`/`Graveyard`/`ActionStack`, turn/active-player bookkeeping, and the win check. Constructed with a seed; deals P1 five cards and P2 six (GDD's first-player compensation, §3.1). `play_land` builds a `StackItem` from `LandRules::get()`, pushes it, and immediately calls `resolve_top_action()` — there is no opponent response step yet. Win is checked once per resolved deploy.
+- **`LandGameMatch`** — the top-level match object owning both `PlayerState`s, the shared `Deck`/`Graveyard`/`ActionStack`, turn/active-player bookkeeping, and the win check. Constructed with a seed; deals P1 five cards and P2 six (GDD's first-player compensation, §3.1). `play_land` takes the card out of the hand once, builds a `StackItem` from `LandRules::get()`, pushes it, and immediately calls `resolve_top_action()` — there is no opponent response step yet. Win is checked once per resolved deploy.
 
 **Error-handling convention (stated in `LandRules.hpp`, applies engine-wide):** contract/programmer violations (bad indices, invalid enum values) throw `std::out_of_range` / `std::invalid_argument`. Illegal-but-expected game moves (e.g. playing out of turn, playing when the hand doesn't have that index) are surfaced by bool-returning methods (`play_land`, `end_turn`) returning `false` — never by throwing. Keep new engine methods consistent with this split.
 
