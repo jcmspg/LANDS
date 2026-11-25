@@ -13,7 +13,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Win check (Domain / Mono) after each resolution | done | §3.3 |
 | Shared graveyard | exists, **nothing writes to it yet** | §3.1 |
 | Forest Reclaim ETB: graveyard target declared up front, required iff the graveyard is non-empty, can take cards the opponent pitched, nothing if countered | done | §3.5, §8.4 |
-| Plains Flicker ETB | **not implemented**; Plains enters vanilla and `play_land` rejects a target for it | §3.5 |
+| Plains Flicker ETB: target (another land you control) declared up front, required iff you control a land; re-triggers the land's ETB inline with fresh choices (`FLICKER_DESTROY` / `FLICKER_RECLAIM` / `FLICKER_EXTRACT`, all answered with `choose_card`); no priority window so it cannot be countered; flickering a Plains fizzles; fizzles if the target was saved | done | §3.5, §8.6 |
 | Main-phase pitch: Forest Ramp, Mountain Rummage (`pitch_land`, 1/turn, goes through the stack) | done | §3.2, §3.4, §3.5 |
 | Island Draw ETB (no-op on empty library) | done | §3.5 |
 | Ramped deploy enters vanilla (`AbilityId::NONE`) | done, tested via Island Draw | §3.2 |
@@ -40,6 +40,8 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
    - A deploy or main-phase pitch that is countered still uses up that turn's deploy / pitch allowance, and a countered Ramp grants no extra deploy.
    - A player can open a priority window only if they hold an Island **and** at least one other card (Counter's cost). Otherwise the engine auto-passes for them.
    - A counter may target any item on the stack, including the caster's own.
+   - Flicker re-triggers a land's *printed* ETB, so a land that originally entered vanilla (ramp) still triggers it when flickered.
+   - A Save may target a land that the caster's own Flicker is targeting, which makes that Flicker fizzle.
 
 1. **Cards are addressed by instance ID, never by hand index** (GDD §6.3). Decided before the priority window, because discards mid-flight shift indices. `Deck::shuffle` assigns each card a random opaque id (a permutation of 0..49) so ids never reveal land type or library position. `play_land`, `PlayerState::take_from_hand`, and `Graveyard::take_card` take ids. Unknown ids are an illegal move (`false`) at the match level and a contract violation (throws) at the container level.
 
@@ -51,7 +53,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 4. ~~**Battlefield identity, Mountain Destroy, Plains Save.**~~ Done.
 5. ~~**Forest Reclaim.**~~ Done.
 6. ~~**Choice prompts:** Swamp Extract and Surveil 2.~~ Done.
-7. **Plains Flicker:** target declared up front (another land you control); re-triggers its deploy ETB inline with fresh choices (Destroy target, Reclaim target, Extract pick) and no priority window; anti-loop (flickering a Plains fizzles); vanilla with no valid target.
+7. ~~**Plains Flicker.**~~ Done.
 8. **Game end:** mandatory deploy, empty-hand loss, turn-50 cap, tiebreaker scoring.
 9. **Action log + replay** from seed, then the bot simulation harness (GDD Phase 1).
 

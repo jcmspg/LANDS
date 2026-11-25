@@ -79,6 +79,13 @@ bool LandGameMatch::valid_deploy_target(int caster_index, AbilityId ability,
             }
             return target_card_id.has_value() && opponent.has_on_board(*target_card_id);
         }
+        case AbilityId::FLICKER: {
+            const PlayerState& caster = players_[caster_index];
+            if (caster.battlefield().empty()) {
+                return !target_card_id.has_value();     // nothing to flicker: enters vanilla
+            }
+            return target_card_id.has_value() && caster.has_on_board(*target_card_id);
+        }
         case AbilityId::RECLAIM: {
             const std::vector<Card>& cards = graveyard_.cards();
             if (cards.empty()) {
@@ -304,17 +311,69 @@ const std::vector<Card>& LandGameMatch::choice_options() const {
     return pending_choice_.options;
 }
 
-bool LandGameMatch::choose_extract(int player_index, uint32_t card_id) {
-    if (pending_choice_.type != ChoiceType::EXTRACT || player_index != pending_choice_.player) {
+bool LandGameMatch::choose_card(int player_index, uint32_t card_id) {
+    const ChoiceType type = pending_choice_.type;
+    const bool single_card_choice = type == ChoiceType::EXTRACT || type == ChoiceType::FLICKER_EXTRACT ||
+                                    type == ChoiceType::FLICKER_DESTROY || type == ChoiceType::FLICKER_RECLAIM;
+    if (!single_card_choice || player_index != pending_choice_.player) {
         return false;
     }
     if (find_card(pending_choice_.options, card_id) == nullptr) {
         return false;
     }
-    // the chosen card leaves the opponent's hand and becomes public in the graveyard
-    graveyard_.add(players_[1 - player_index].take_from_hand(card_id));
+
+    PlayerState& opponent = players_[1 - player_index];
+    switch (type) {
+        case ChoiceType::EXTRACT:
+        case ChoiceType::FLICKER_EXTRACT:
+            // the chosen card leaves the opponent's hand and becomes public in the graveyard
+            graveyard_.add(opponent.take_from_hand(card_id));
+            break;
+        case ChoiceType::FLICKER_DESTROY:
+            graveyard_.add(opponent.remove_from_board(card_id));
+            break;
+        case ChoiceType::FLICKER_RECLAIM:
+            players_[player_index].add_to_hand(graveyard_.take_card(card_id));
+            break;
+        default:
+            break;
+    }
     pending_choice_ = PendingChoice{};
     return true;
+}
+
+bool LandGameMatch::is_saved(const std::optional<uint32_t>& card_id) const {
+    return card_id.has_value() &&
+           std::find(saved_card_ids_.begin(), saved_card_ids_.end(), *card_id) != saved_card_ids_.end();
+}
+
+void LandGameMatch::retrigger_etb(int caster_index, AbilityId ability) {
+    // resolves inline: no priority window opens, so a flickered ETB cannot be countered
+    const PlayerState& opponent = players_[1 - caster_index];
+    switch (ability) {
+        case AbilityId::DRAW:
+            if (deck_.deck_size() > 0) {
+                players_[caster_index].draw_from(deck_);
+            }
+            break;
+        case AbilityId::DESTROY:
+            if (!opponent.battlefield().empty()) {
+                pending_choice_ = PendingChoice{ChoiceType::FLICKER_DESTROY, caster_index, opponent.battlefield()};
+            }
+            break;
+        case AbilityId::RECLAIM:
+            if (!graveyard_.cards().empty()) {
+                pending_choice_ = PendingChoice{ChoiceType::FLICKER_RECLAIM, caster_index, graveyard_.cards()};
+            }
+            break;
+        case AbilityId::EXTRACT:
+            if (!opponent.hand().empty()) {
+                pending_choice_ = PendingChoice{ChoiceType::FLICKER_EXTRACT, caster_index, opponent.hand()};
+            }
+            break;
+        default:
+            break;  // Flicker re-triggering a Flicker fizzles (anti-loop rule)
+    }
 }
 
 bool LandGameMatch::choose_surveil(int player_index, const std::vector<uint32_t>& to_graveyard,
@@ -427,6 +486,10 @@ bool LandGameMatch::played_land_this_turn() const {
     return played_land_;
 }
 
+bool LandGameMatch::ramp_available() const {
+    return ramp_available_;
+}
+
 bool LandGameMatch::pitched_this_turn() const {
     return pitched_this_turn_;
 }
@@ -476,10 +539,7 @@ void LandGameMatch::resolve_top_action() {
                     // fizzles if the target was saved or already left the battlefield;
                     // the Mountain itself still enters either way
                     PlayerState& opponent = players_[1 - item.caster_id];
-                    const bool saved = item.target_card_id.has_value() &&
-                        std::find(saved_card_ids_.begin(), saved_card_ids_.end(),
-                                  *item.target_card_id) != saved_card_ids_.end();
-                    if (item.target_card_id.has_value() && !saved &&
+                    if (item.target_card_id.has_value() && !is_saved(item.target_card_id) &&
                         opponent.has_on_board(*item.target_card_id)) {
                         graveyard_.add(opponent.remove_from_board(*item.target_card_id));
                     }
@@ -500,8 +560,18 @@ void LandGameMatch::resolve_top_action() {
                     }
                     break;
                 }
+                case AbilityId::FLICKER: {
+                    // fizzles if the target was saved; otherwise re-trigger the land's own deploy ETB
+                    const Card* land = item.target_card_id.has_value()
+                        ? find_card(players_[item.caster_id].battlefield(), *item.target_card_id)
+                        : nullptr;
+                    if (land != nullptr && !is_saved(item.target_card_id)) {
+                        retrigger_etb(item.caster_id, get(land->get_land_type()).deploy_ability);
+                    }
+                    break;
+                }
                 default:
-                    break;  // Flicker is not wired up yet
+                    break;
             }
 
             WinEvaluator eval;

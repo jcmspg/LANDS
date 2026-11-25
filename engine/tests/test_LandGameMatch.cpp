@@ -204,10 +204,17 @@ bool hand_holds(const LandGameMatch& match, int player_index, uint32_t card_id) 
 
 // A card whose deploy needs no target and opens no choice right now: not an Island (Draw
 // changes hand sizes) or Swamp (Extract pauses for a choice), not a Mountain while the opponent
-// has lands, not a Forest while the graveyard has cards. Use it for "just deploy something".
+// has lands, not a Forest while the graveyard has cards, not a Plains while you control a land.
+// A ramped deploy enters vanilla, so then any card will do. Use it for "just deploy something".
 const Card& plain_card(const LandGameMatch& match, int player_index) {
+    if (match.played_land_this_turn() && match.ramp_available()) {
+        return match.hand(player_index).front();
+    }
     for (const Card& card : match.hand(player_index)) {
         const LandType land_type = card.get_land_type();
+        if (land_type == LandType::PLAINS && total_lands(match, player_index) > 0) {
+            continue;
+        }
         if (land_type == LandType::ISLAND || land_type == LandType::SWAMP) {
             continue;
         }
@@ -228,6 +235,48 @@ uint32_t plain_card_id(const LandGameMatch& match, int player_index) {
 }
 
 } // namespace
+
+enum class P1Action { NONE, DEPLOY, RUMMAGE };
+
+// Brings a match to P0's turn 2 with a Plains in hand and `first_land` already on P0's
+// battlefield (`battlefield(0)[0]`). On its turn 1, P1 does `p1_action`: nothing, deploy a
+// plain card (`battlefield(1)[0]`), or pitch Mountain's Rummage (graveyard holds 2 cards).
+// P0 never holds an Island unless `first_land` is one; P1 holds exactly one iff `p1_island`.
+// A Swamp first land has its Extract answered with the first option.
+LandGameMatch make_flicker_scenario(LandType first_land, P1Action p1_action = P1Action::NONE,
+                                    bool p1_island = false) {
+    for (uint64_t seed = 1; seed < 50000; ++seed) {
+        LandGameMatch match(seed);
+        const size_t p0_islands = count_in_hand(match, 0, LandType::ISLAND);
+        if (p0_islands != (first_land == LandType::ISLAND ? 1 : 0) ||
+            count_in_hand(match, 1, LandType::ISLAND) != (p1_island ? 1 : 0) ||
+            !find_in_hand(match, 0, first_land).has_value() ||
+            count_in_hand(match, 0, LandType::PLAINS) < (first_land == LandType::PLAINS ? 2 : 1) ||
+            (p1_action == P1Action::RUMMAGE && !find_in_hand(match, 1, LandType::MOUNTAIN).has_value())) {
+            continue;
+        }
+
+        if (!match.play_land(0, *find_in_hand(match, 0, first_land))) { continue; }
+        settle(match);
+        if (match.choice_type() == ChoiceType::EXTRACT &&
+            !match.choose_card(0, match.choice_options().front().get_identifier())) { continue; }
+        if (!match.end_turn(0)) { continue; }
+
+        if (p1_action == P1Action::DEPLOY) {
+            if (!match.play_land(1, plain_card_id(match, 1))) { continue; }
+            settle(match);
+        } else if (p1_action == P1Action::RUMMAGE) {
+            const uint32_t mountain = *find_in_hand(match, 1, LandType::MOUNTAIN);
+            if (!match.pitch_land(1, mountain, first_card_other_than(match, 1, mountain))) { continue; }
+            settle(match);
+        }
+        if (match.choice_player() != -1 || !match.end_turn(1)) { continue; }
+        if (!find_in_hand(match, 0, LandType::PLAINS).has_value()) { continue; }
+        return match;
+    }
+    ADD_FAILURE() << "no seed produced the Flicker scenario";
+    return LandGameMatch(0);
+}
 
 TEST(LandGameMatch, InitialState) {
     LandGameMatch match(12345);
@@ -386,7 +435,7 @@ TEST(LandGameMatch, RampAllowsOneExtraDeploy) {
     EXPECT_TRUE(match.pitch_land(0, *find_in_hand(match, 0, LandType::FOREST)));
     EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
     EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));     // the ramped deploy
-    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));    // only one extra
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));    // only one extra
     EXPECT_EQ(total_lands(match, 0), 2);
     EXPECT_EQ(match.hand_size(0), 2);               // 5 - 1 pitched - 2 deployed
     EXPECT_EQ(match.graveyard_size(), 1);
@@ -400,11 +449,11 @@ TEST(LandGameMatch, RampPitchedAfterFirstDeployStillGrantsExtraDeploy) {
     EXPECT_EQ(match.hand_size(0), 4);
 
     // a second deploy is illegal until Ramp resolves
-    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));
 
     EXPECT_TRUE(match.pitch_land(0, forest));
     EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
-    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));
     EXPECT_EQ(total_lands(match, 0), 2);
     EXPECT_EQ(match.hand_size(0), 2);
     EXPECT_EQ(match.graveyard_size(), 1);
@@ -419,7 +468,7 @@ TEST(LandGameMatch, UnspentRampDoesNotCarryOver) {
 
     EXPECT_FALSE(match.pitched_this_turn());
     EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
-    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));    // ramp expired
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));    // ramp expired
 }
 
 TEST(LandGameMatch, OnlyOneMainPhasePitchPerTurn) {
@@ -684,7 +733,7 @@ TEST(LandGameMatch, CounterSendsDeployedLandToTopOfLibrary) {
 
     // the deploy is still used up, and the countered land is the next card drawn
     EXPECT_TRUE(match.played_land_this_turn());
-    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));
     EXPECT_TRUE(match.end_turn(0));
     EXPECT_TRUE(match.end_turn(1));                     // P0 draws: Memory Lapse
     EXPECT_NE(std::find(match.hand(0).begin(), match.hand(0).end(), deployed), match.hand(0).end());
@@ -725,7 +774,7 @@ TEST(LandGameMatch, CounteredRampGrantsNoExtraDeploy) {
                                    match.stack_top().stack_id));
 
     EXPECT_TRUE(match.play_land(0, plain_card_id(match, 0)));
-    EXPECT_FALSE(match.play_land(0, plain_card_id(match, 0)));  // no ramp was granted
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));  // no ramp was granted
     EXPECT_EQ(total_lands(match, 0), 1);
 }
 
@@ -842,17 +891,25 @@ TEST(LandGameMatch, LandsWithoutTargetsRejectATarget) {
 }
 
 TEST(LandGameMatch, RampedMountainEntersVanilla) {
-    LandGameMatch match = make_destroy_scenario(false, false, {LandType::FOREST});
-    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
-    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
-    const uint32_t target = match.battlefield(1)[0].get_identifier();
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 0, LandType::PLAINS) >= 1 &&
+               count_in_hand(m, 1, LandType::FOREST) >= 1 &&
+               count_in_hand(m, 1, LandType::MOUNTAIN) >= 1 &&
+               count_in_hand(m, 1, LandType::PLAINS) >= 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0 &&
+               count_in_hand(m, 1, LandType::ISLAND) == 0;
+    });
+    ASSERT_TRUE(match.play_land(0, plain_card_id(match, 0)));       // P0 puts a land on the board
+    ASSERT_TRUE(match.end_turn(0));
+    const uint32_t mountain = *find_in_hand(match, 1, LandType::MOUNTAIN);
+    const uint32_t target = match.battlefield(0)[0].get_identifier();
 
-    ASSERT_TRUE(match.pitch_land(0, forest));
-    ASSERT_TRUE(match.play_land(0, first_card_not_of_type(match, 0, LandType::MOUNTAIN)));
-    EXPECT_FALSE(match.play_land(0, mountain, target));             // vanilla: no target allowed
-    EXPECT_TRUE(match.play_land(0, mountain));
-    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);
-    EXPECT_EQ(total_lands(match, 1), 1);                            // the ramped Mountain destroyed nothing
+    ASSERT_TRUE(match.pitch_land(1, *find_in_hand(match, 1, LandType::FOREST)));
+    ASSERT_TRUE(match.play_land(1, plain_card_id(match, 1)));
+    EXPECT_FALSE(match.play_land(1, mountain, target));             // vanilla: no target allowed
+    EXPECT_TRUE(match.play_land(1, mountain));
+    EXPECT_EQ(match.land_count(1, LandType::MOUNTAIN), 1);
+    EXPECT_EQ(total_lands(match, 0), 1);                            // the ramped Mountain destroyed nothing
 }
 
 TEST(LandGameMatch, SaveOpensWindowOnlyWhenOpponentLandIsTargeted) {
@@ -1043,7 +1100,7 @@ TEST(LandGameMatch, ExtractDiscardsTheChosenOpponentCard) {
     ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
     const Card chosen = match.hand(1)[2];
 
-    EXPECT_TRUE(match.choose_extract(0, chosen.get_identifier()));
+    EXPECT_TRUE(match.choose_card(0, chosen.get_identifier()));
     EXPECT_EQ(match.choice_player(), -1);
     EXPECT_EQ(match.choice_type(), ChoiceType::NONE);
     EXPECT_TRUE(match.choice_options().empty());
@@ -1056,16 +1113,16 @@ TEST(LandGameMatch, ExtractDiscardsTheChosenOpponentCard) {
 
 TEST(LandGameMatch, ExtractRejectionsKeepTheChoicePending) {
     LandGameMatch match = make_match_with(0, {LandType::SWAMP});
-    EXPECT_FALSE(match.choose_extract(0, 0));                           // nothing pending yet
+    EXPECT_FALSE(match.choose_card(0, 0));                           // nothing pending yet
 
     ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::SWAMP)));
     const uint32_t opponent_card = first_card_id(match, 1);
 
-    EXPECT_FALSE(match.choose_extract(1, opponent_card));               // only the Swamp's controller answers
-    EXPECT_FALSE(match.choose_extract(-1, opponent_card));
-    EXPECT_FALSE(match.choose_extract(2, opponent_card));
-    EXPECT_FALSE(match.choose_extract(0, first_card_id(match, 0)));     // own card is not an option
-    EXPECT_FALSE(match.choose_extract(0, 9999));
+    EXPECT_FALSE(match.choose_card(1, opponent_card));               // only the Swamp's controller answers
+    EXPECT_FALSE(match.choose_card(-1, opponent_card));
+    EXPECT_FALSE(match.choose_card(2, opponent_card));
+    EXPECT_FALSE(match.choose_card(0, first_card_id(match, 0)));     // own card is not an option
+    EXPECT_FALSE(match.choose_card(0, 9999));
     EXPECT_FALSE(match.choose_surveil(0, {}, {}));                      // wrong kind of answer
 
     EXPECT_EQ(match.choice_player(), 0);
@@ -1183,7 +1240,7 @@ TEST(LandGameMatch, SurveilRejectionsKeepTheChoicePending) {
     EXPECT_FALSE(match.choose_surveil(0, {a, b}, {a}));
     EXPECT_FALSE(match.choose_surveil(0, {a}, {9999}));                 // not a peeked card
     EXPECT_FALSE(match.choose_surveil(0, {a, b, 9999}, {}));            // too many ids
-    EXPECT_FALSE(match.choose_extract(0, a));                           // wrong kind of answer
+    EXPECT_FALSE(match.choose_card(0, a));                           // wrong kind of answer
 
     EXPECT_EQ(match.choice_type(), ChoiceType::SURVEIL);
     EXPECT_EQ(match.deck_size(), 39);
@@ -1252,6 +1309,170 @@ TEST(LandGameMatch, CounteredSurveilOffersNoChoice) {
     EXPECT_EQ(match.deck_size(), 39);
     EXPECT_EQ(match.graveyard_size(), 3);                               // Swamp, Island, cost card
     EXPECT_TRUE(match.pitched_this_turn());
+}
+
+TEST(LandGameMatch, FlickerRetriggersIslandDraw) {
+    LandGameMatch match = make_flicker_scenario(LandType::ISLAND);
+    const uint32_t island = match.battlefield(0)[0].get_identifier();
+    const size_t hand_before = match.hand_size(0);
+    const size_t deck_before = match.deck_size();
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS), island));
+    EXPECT_EQ(match.choice_player(), -1);                           // Draw needs no choice
+    EXPECT_EQ(match.hand_size(0), hand_before - 1 + 1);             // Plains out, flickered draw in
+    EXPECT_EQ(match.deck_size(), deck_before - 1);
+    EXPECT_EQ(match.land_count(0, LandType::PLAINS), 1);
+    EXPECT_EQ(match.land_count(0, LandType::ISLAND), 1);            // flickering never duplicates the land
+}
+
+TEST(LandGameMatch, FlickerRequiresAnotherLandYouControl) {
+    LandGameMatch match = make_flicker_scenario(LandType::FOREST, P1Action::DEPLOY);
+    const uint32_t plains = *find_in_hand(match, 0, LandType::PLAINS);
+    const uint32_t own_land = match.battlefield(0)[0].get_identifier();
+    const uint32_t opponent_land = match.battlefield(1)[0].get_identifier();
+    const size_t hand_before = match.hand_size(0);
+
+    EXPECT_FALSE(match.play_land(0, plains));                       // a land exists, so a target is required
+    EXPECT_FALSE(match.play_land(0, plains, opponent_land));        // not yours
+    EXPECT_FALSE(match.play_land(0, plains, plains));               // cannot target itself (still in hand)
+    EXPECT_FALSE(match.play_land(0, plains, 9999));
+    EXPECT_FALSE(match.played_land_this_turn());
+    EXPECT_EQ(match.hand_size(0), hand_before);
+    EXPECT_EQ(match.stack_size(), 0);
+
+    EXPECT_TRUE(match.play_land(0, plains, own_land));
+}
+
+TEST(LandGameMatch, FlickerEntersVanillaWithoutALandToTarget) {
+    LandGameMatch match = make_match_with(0, {LandType::PLAINS});
+    const uint32_t plains = *find_in_hand(match, 0, LandType::PLAINS);
+
+    EXPECT_FALSE(match.play_land(0, plains, 9999));                 // nothing to flicker
+    EXPECT_TRUE(match.play_land(0, plains));
+    EXPECT_EQ(match.land_count(0, LandType::PLAINS), 1);
+    EXPECT_EQ(match.choice_player(), -1);
+}
+
+TEST(LandGameMatch, FlickeringAPlainsFizzlesAntiLoop) {
+    LandGameMatch match = make_flicker_scenario(LandType::PLAINS);
+    const uint32_t first_plains = match.battlefield(0)[0].get_identifier();
+    const size_t hand_before = match.hand_size(0);
+    const size_t deck_before = match.deck_size();
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS), first_plains));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.land_count(0, LandType::PLAINS), 2);
+    EXPECT_EQ(match.hand_size(0), hand_before - 1);                 // the re-trigger did nothing
+    EXPECT_EQ(match.deck_size(), deck_before);
+    EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, FlickerRetriggersDestroyWithAFreshTarget) {
+    LandGameMatch match = make_flicker_scenario(LandType::MOUNTAIN, P1Action::DEPLOY);
+    const uint32_t mountain = match.battlefield(0)[0].get_identifier();
+    const Card victim = match.battlefield(1)[0];
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS), mountain));
+    ASSERT_EQ(match.choice_type(), ChoiceType::FLICKER_DESTROY);
+    EXPECT_EQ(match.choice_player(), 0);
+    EXPECT_EQ(ids_of(match.choice_options()), ids_of(match.battlefield(1)));
+    EXPECT_FALSE(match.end_turn(0));                                // resolution is paused
+
+    EXPECT_TRUE(match.choose_card(0, victim.get_identifier()));
+    EXPECT_TRUE(match.battlefield(1).empty());
+    EXPECT_EQ(match.graveyard_size(), 1);
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 1);          // the flickered Mountain stays put
+    EXPECT_EQ(match.land_count(0, LandType::PLAINS), 1);
+    EXPECT_EQ(match.choice_player(), -1);
+}
+
+TEST(LandGameMatch, FlickerRetriggersReclaimWithAFreshTarget) {
+    LandGameMatch match = make_flicker_scenario(LandType::FOREST, P1Action::RUMMAGE);
+    const uint32_t forest = match.battlefield(0)[0].get_identifier();
+    ASSERT_EQ(match.graveyard_size(), 2);
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS), forest));
+    settle(match);                                                  // P1 may hold an Island by now
+    ASSERT_EQ(match.choice_type(), ChoiceType::FLICKER_RECLAIM);
+    EXPECT_EQ(match.choice_player(), 0);
+    const uint32_t taken = match.choice_options()[0].get_identifier();
+    EXPECT_EQ(match.choice_options().size(), 2);
+
+    EXPECT_TRUE(match.choose_card(0, taken));
+    EXPECT_TRUE(hand_holds(match, 0, taken));
+    EXPECT_EQ(match.graveyard_size(), 1);
+}
+
+TEST(LandGameMatch, FlickerRetriggersExtractWithAFreshPick) {
+    LandGameMatch match = make_flicker_scenario(LandType::SWAMP);
+    const uint32_t swamp = match.battlefield(0)[0].get_identifier();
+    ASSERT_EQ(match.graveyard_size(), 1);                           // the first Extract already took a card
+    const size_t p1_hand_before = match.hand_size(1);
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS), swamp));
+    ASSERT_EQ(match.choice_type(), ChoiceType::FLICKER_EXTRACT);
+    EXPECT_EQ(ids_of(match.choice_options()), ids_of(match.hand(1)));
+    const uint32_t picked = match.choice_options()[1].get_identifier();
+
+    EXPECT_TRUE(match.choose_card(0, picked));
+    EXPECT_EQ(match.hand_size(1), p1_hand_before - 1);
+    EXPECT_FALSE(hand_holds(match, 1, picked));
+    EXPECT_EQ(match.graveyard_size(), 2);
+}
+
+TEST(LandGameMatch, FlickerWithNothingToChooseOffersNoChoice) {
+    LandGameMatch match = make_flicker_scenario(LandType::MOUNTAIN);   // P1 controls no land
+    const uint32_t mountain = match.battlefield(0)[0].get_identifier();
+
+    EXPECT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS), mountain));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.land_count(0, LandType::PLAINS), 1);
+    EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, FlickeredEtbCannotBeCountered) {
+    LandGameMatch match = make_flicker_scenario(LandType::MOUNTAIN, P1Action::DEPLOY, true);
+    const Card victim = match.battlefield(1)[0];
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS),
+                                match.battlefield(0)[0].get_identifier()));
+    ASSERT_EQ(match.priority_player(), 1);                          // the Plains deploy itself can be answered
+
+    EXPECT_TRUE(match.pass_priority(1));
+    ASSERT_EQ(match.choice_type(), ChoiceType::FLICKER_DESTROY);
+    EXPECT_EQ(match.priority_player(), -1);                         // no window for the re-triggered ETB
+    EXPECT_TRUE(match.choose_card(0, victim.get_identifier()));
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_TRUE(match.battlefield(1).empty());
+}
+
+TEST(LandGameMatch, CounteredPlainsFlickersNothing) {
+    LandGameMatch match = make_flicker_scenario(LandType::MOUNTAIN, P1Action::DEPLOY, true);
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS),
+                                match.battlefield(0)[0].get_identifier()));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_TRUE(match.cast_counter(1, island, first_card_other_than(match, 1, island),
+                                   match.stack_top().stack_id));
+    EXPECT_EQ(match.choice_player(), -1);
+    EXPECT_EQ(match.land_count(0, LandType::PLAINS), 0);
+    EXPECT_EQ(match.battlefield(1).size(), 1);                      // nothing was destroyed
+}
+
+TEST(LandGameMatch, FlickerChoiceRejectionsKeepTheChoicePending) {
+    LandGameMatch match = make_flicker_scenario(LandType::MOUNTAIN, P1Action::DEPLOY);
+    const uint32_t victim = match.battlefield(1)[0].get_identifier();
+    ASSERT_TRUE(match.play_land(0, *find_in_hand(match, 0, LandType::PLAINS),
+                                match.battlefield(0)[0].get_identifier()));
+    ASSERT_EQ(match.choice_type(), ChoiceType::FLICKER_DESTROY);
+
+    EXPECT_FALSE(match.choose_card(1, victim));                     // only the flickering player picks
+    EXPECT_FALSE(match.choose_card(0, match.battlefield(0)[0].get_identifier()));   // own land is not an option
+    EXPECT_FALSE(match.choose_card(0, 9999));
+    EXPECT_FALSE(match.choose_surveil(0, {}, {}));
+    EXPECT_EQ(match.choice_type(), ChoiceType::FLICKER_DESTROY);
+    EXPECT_EQ(match.battlefield(1).size(), 1);
+    EXPECT_EQ(match.graveyard_size(), 0);
 }
 
 } // namespace lands

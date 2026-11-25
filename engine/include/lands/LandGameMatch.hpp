@@ -17,8 +17,9 @@ class LandGameMatch {
         explicit LandGameMatch(uint64_t seed);   // shuffle + deal
 
         // target_card_id is declared up front. Mountain's Destroy: an opponent land;
-        // Forest's Reclaim: a card in the shared graveyard. It is required exactly
-        // when a valid target exists, and rejected otherwise.
+        // Forest's Reclaim: a card in the shared graveyard; Plains' Flicker: another
+        // land you control. It is required exactly when a valid target exists, and
+        // rejected otherwise.
         bool play_land(int player_index, uint32_t card_id,
                        std::optional<uint32_t> target_card_id = std::nullopt);
 
@@ -34,12 +35,13 @@ class LandGameMatch {
         // Decline to respond; the whole stack then resolves top to bottom.
         bool pass_priority(int player_index);
 
-        // Mid-resolution choices (Swamp Extract / Surveil). Resolution pauses until the
+        // Mid-resolution choices (Swamp Extract / Surveil, and flickered ETBs). Resolution pauses until the
         // choosing player answers; every other action is rejected meanwhile.
         int choice_player() const;                          // -1 if no choice is pending
         ChoiceType choice_type() const;
         const std::vector<Card>& choice_options() const;    // private to choice_player()
-        bool choose_extract(int player_index, uint32_t card_id);
+        // Answers any single-card choice: Extract, FLICKER_EXTRACT, FLICKER_DESTROY, FLICKER_RECLAIM.
+        bool choose_card(int player_index, uint32_t card_id);
         // to_graveyard + library_top_order must partition the options exactly;
         // library_top_order[0] becomes the new top card of the library.
         bool choose_surveil(int player_index, const std::vector<uint32_t>& to_graveyard,
@@ -69,6 +71,7 @@ class LandGameMatch {
         int active_player() const;
         int turn_number() const;
         bool played_land_this_turn() const;
+        bool ramp_available() const;    // a resolved Ramp that has not been spent yet
         bool pitched_this_turn() const;
 
         size_t graveyard_size() const;
@@ -94,6 +97,8 @@ class LandGameMatch {
         // priority window
         int priority_player_{-1};
         PendingChoice pending_choice_;
+        bool is_saved(const std::optional<uint32_t>& card_id) const;
+        void retrigger_etb(int caster_index, AbilityId ability);   // flickered ETB: fresh choices, no window
         bool action_blocked() const;   // a window or a choice is pending
         std::vector<uint32_t> countered_ids_;   // stack ids countered during this resolution
         std::vector<uint32_t> saved_card_ids_;  // lands saved during this resolution

@@ -13,6 +13,10 @@ enum class ChoiceType : uint8_t {
     NONE,
     EXTRACT,    // Swamp deploy: pick one card from the opponent's hand to discard
     SURVEIL,    // Swamp pitch: bin any of the top cards of the library, order the rest
+    // Plains Flicker re-triggers another land's deploy ETB; its choices are made fresh (GDD §3.5)
+    FLICKER_DESTROY,    // pick an opponent land to destroy
+    FLICKER_RECLAIM,    // pick a graveyard card to take
+    FLICKER_EXTRACT,    // pick a card from the opponent's hand to discard
 };
 
 struct PendingChoice {
