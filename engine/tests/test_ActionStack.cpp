@@ -28,4 +28,20 @@ TEST(ActionStack, PushAndPop) {
     
 }
 
+TEST(ActionStack, ContainsFindsItemsByStackId) {
+    ActionStack stack;
+    EXPECT_FALSE(stack.contains(1));
+    stack.push(StackItem{1, 0, PlayMode::DEPLOY, Card(LandType::FOREST, 1), AbilityId::NONE});
+    stack.push(StackItem{2, 1, PlayMode::PITCH, Card(LandType::ISLAND, 2), AbilityId::COUNTER, 1});
+    EXPECT_TRUE(stack.contains(1));
+    EXPECT_TRUE(stack.contains(2));
+    EXPECT_FALSE(stack.contains(3));
+    EXPECT_EQ(stack.top().target_stack_id, 1);
+
+    stack.pop();
+    EXPECT_FALSE(stack.contains(2));
+    EXPECT_TRUE(stack.contains(1));
+    EXPECT_EQ(stack.top().target_stack_id, 0);      // no target by default
+}
+
 } // namespace lands

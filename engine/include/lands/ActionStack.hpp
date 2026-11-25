@@ -5,6 +5,7 @@
 #include "lands/PlayMode.hpp"
 #include "lands/AbilityId.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace lands {
@@ -15,6 +16,7 @@ struct StackItem {
     PlayMode mode{PlayMode::DEPLOY};
     Card card;
     AbilityId ability{AbilityId::NONE};
+    uint32_t target_stack_id{0};    // 0 = no target; stack ids start at 1
 };
 
 class ActionStack {
@@ -23,6 +25,7 @@ class ActionStack {
         StackItem pop();                 // throw if empty
         const StackItem& top() const;    // throw if empty
         bool empty() const;
+        bool contains(uint32_t stack_id) const;
         size_t size() const;
 
     private:

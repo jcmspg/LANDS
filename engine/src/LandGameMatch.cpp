@@ -22,6 +22,13 @@ void require_land_type(LandType land_type) {
     }
 }
 
+const Card* find_card(const std::vector<Card>& hand, uint32_t card_id) {
+    const auto it = std::find_if(hand.begin(), hand.end(), [card_id](const Card& card) {
+        return card.get_identifier() == card_id;
+    });
+    return it == hand.end() ? nullptr : &*it;
+}
+
 } // namespace
 
 LandGameMatch::LandGameMatch(uint64_t seed) {
@@ -64,6 +71,9 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
     if (player_index != active_player_) {
         return false;
     }
+    if (priority_player_ != -1) {   // a window is open: respond or pass first
+        return false;
+    }
     if (!players_[player_index].has_card(card_id)) {
         return false;
     }
@@ -88,10 +98,11 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
         ramp_available_ = false;
     }
 
-    stack_.push(std::move(item));
-    resolve_top_action();
-
+    // the deploy is used up even if it ends up countered
     played_land_ = true;
+
+    stack_.push(std::move(item));
+    open_priority_window(player_index);
 
     return true;
     
@@ -105,19 +116,19 @@ bool LandGameMatch::pitch_land(int player_index, uint32_t card_id,
     if (player_index != active_player_) {
         return false;
     }
+    if (priority_player_ != -1) {
+        return false;
+    }
     if (pitched_this_turn_) {
         return false;
     }
     PlayerState& player = players_[player_index];
-    if (!player.has_card(card_id)) {
+    const Card* pitched = find_card(player.hand(), card_id);
+    if (pitched == nullptr) {
         return false;
     }
 
-    const auto& hand = player.hand();
-    const auto it = std::find_if(hand.begin(), hand.end(), [card_id](const Card& card) {
-        return card.get_identifier() == card_id;
-    });
-    const LandDefinition& def = get(it->get_land_type());
+    const LandDefinition& def = get(pitched->get_land_type());
     if (def.pitch_timing != PitchTiming::MainPhase) {
         return false;
     }
@@ -149,12 +160,99 @@ bool LandGameMatch::pitch_land(int player_index, uint32_t card_id,
         def.pitch_ability
     };
 
-    stack_.push(std::move(item));
-    resolve_top_action();
-
+    // the pitch is used up even if it ends up countered
     pitched_this_turn_ = true;
 
+    stack_.push(std::move(item));
+    open_priority_window(player_index);
+
     return true;
+}
+
+bool LandGameMatch::cast_counter(int player_index, uint32_t island_card_id,
+                                 uint32_t extra_card_id, uint32_t target_stack_id) {
+    if (player_index < 0 || player_index >= 2) {
+        return false;
+    }
+    if (player_index != priority_player_) {
+        return false;
+    }
+    PlayerState& player = players_[player_index];
+    const Card* island = find_card(player.hand(), island_card_id);
+    if (island == nullptr || island_card_id == extra_card_id || !player.has_card(extra_card_id)) {
+        return false;
+    }
+    if (get(island->get_land_type()).pitch_ability != AbilityId::COUNTER) {
+        return false;
+    }
+    if (!stack_.contains(target_stack_id)) {
+        return false;
+    }
+
+    // all checks passed: both cost cards leave the hand
+    Card counter_card = player.take_from_hand(island_card_id);
+    graveyard_.add(player.take_from_hand(extra_card_id));
+
+    StackItem item {
+        next_stack_id_++,
+        player_index,
+        PlayMode::PITCH,
+        counter_card,
+        AbilityId::COUNTER,
+        target_stack_id
+    };
+
+    stack_.push(std::move(item));
+    open_priority_window(player_index);
+
+    return true;
+}
+
+bool LandGameMatch::pass_priority(int player_index) {
+    if (player_index < 0 || player_index >= 2) {
+        return false;
+    }
+    if (player_index != priority_player_) {
+        return false;
+    }
+    priority_player_ = -1;
+    resolve_stack();
+    return true;
+}
+
+int LandGameMatch::priority_player() const {
+    return priority_player_;
+}
+
+const StackItem& LandGameMatch::stack_top() const {
+    return stack_.top();
+}
+
+bool LandGameMatch::can_respond(int player_index) const {
+    // Counter costs an Island plus one other card, so Island + 1 is the minimum hand
+    const PlayerState& player = players_[player_index];
+    if (player.hand_size() < 2) {
+        return false;
+    }
+    return std::any_of(player.hand().begin(), player.hand().end(), [](const Card& card) {
+        return get(card.get_land_type()).pitch_ability == AbilityId::COUNTER;
+    });
+}
+
+void LandGameMatch::open_priority_window(int pusher_index) {
+    priority_player_ = -1;      // the previous holder (if any) just acted
+    const int opponent = 1 - pusher_index;
+    if (can_respond(opponent)) {
+        priority_player_ = opponent;
+    } else {
+        resolve_stack();    // auto-pass (GDD §4.3): the opponent cannot act
+    }
+}
+
+void LandGameMatch::resolve_stack() {
+    while (!stack_.empty()) {
+        resolve_top_action();
+    }
 }
 
 void LandGameMatch::begin_turn() {
@@ -172,6 +270,9 @@ bool LandGameMatch::end_turn(int player_index) {
         return false;
     }
     if (player_index != active_player_) {
+        return false;
+    }
+    if (priority_player_ != -1) {
         return false;
     }
     played_land_ = false;
@@ -212,45 +313,60 @@ size_t LandGameMatch::stack_size() const {
 void LandGameMatch::resolve_top_action() {
     StackItem item = stack_.pop();
 
+    const bool countered = std::find(countered_ids_.begin(), countered_ids_.end(),
+                                     item.stack_id) != countered_ids_.end();
+
     if (item.mode == PlayMode::DEPLOY) {
-        players_[item.caster_id].add_to_board(item.card.get_land_type());
+        if (countered) {
+            // Memory Lapse: the countered land goes on top of the shared library
+            deck_.put_on_top(item.card);
+        } else {
+            players_[item.caster_id].add_to_board(item.card.get_land_type());
 
-        // ETB (GDD §3.5); a ramped deploy carries AbilityId::NONE and enters vanilla
-        switch (item.ability) {
-            case AbilityId::DRAW:
-                // empty library: the draw does nothing but the land still enters
-                if (deck_.deck_size() > 0) {
-                    players_[item.caster_id].draw_from(deck_);
-                }
-                break;
-            default:
-                break;  // Flicker / Destroy / Extract / Reclaim are not wired up yet
+            // ETB (GDD §3.5); a ramped deploy carries AbilityId::NONE and enters vanilla
+            switch (item.ability) {
+                case AbilityId::DRAW:
+                    // empty library: the draw does nothing but the land still enters
+                    if (deck_.deck_size() > 0) {
+                        players_[item.caster_id].draw_from(deck_);
+                    }
+                    break;
+                default:
+                    break;  // Flicker / Destroy / Extract / Reclaim are not wired up yet
+            }
+
+            WinEvaluator eval;
+            const auto result = eval.evaluate(players_[item.caster_id].land_counts());
+            if (result != WinCondition::NONE) { // DOMAIN OR MONO -> NOT THE PLAYER INDEX
+                winner_ = result;
+            }
         }
+    } else {
+        // pitched cards never touch the battlefield, countered or not
+        graveyard_.add(item.card);
 
-        WinEvaluator eval;
-        const auto result = eval.evaluate(players_[item.caster_id].land_counts());
-        if (result != WinCondition::NONE) { // DOMAIN OR MONO -> NOT THE PLAYER INDEX
-            winner_ = result;
+        if (!countered) {
+            switch (item.ability) {
+                case AbilityId::RAMP:
+                    ramp_available_ = true;
+                    break;
+                case AbilityId::RUMMAGE:
+                    // draw 2, or as many as the shared library still has
+                    for (int i = 0; i < 2 && deck_.deck_size() > 0; ++i) {
+                        players_[item.caster_id].draw_from(deck_);
+                    }
+                    break;
+                case AbilityId::COUNTER:
+                    countered_ids_.push_back(item.target_stack_id);
+                    break;
+                default:
+                    break;  // Save / Surveil are not wired up yet
+            }
         }
     }
 
-    if (item.mode == PlayMode::PITCH) {
-        // pitched cards never touch the battlefield
-        graveyard_.add(item.card);
-
-        switch (item.ability) {
-            case AbilityId::RAMP:
-                ramp_available_ = true;
-                break;
-            case AbilityId::RUMMAGE:
-                // draw 2, or as many as the shared library still has
-                for (int i = 0; i < 2 && deck_.deck_size() > 0; ++i) {
-                    players_[item.caster_id].draw_from(deck_);
-                }
-                break;
-            default:
-                break;  // Save / Counter / Surveil are not wired up yet
-        }
+    if (stack_.empty()) {
+        countered_ids_.clear();
     }
 }
 

@@ -25,6 +25,12 @@ const StackItem& ActionStack::top() const {
     return items_.back();
 }
 
+bool ActionStack::contains(uint32_t stack_id) const {
+    return std::any_of(items_.begin(), items_.end(), [stack_id](const StackItem& item) {
+        return item.stack_id == stack_id;
+    });
+}
+
 bool ActionStack::empty() const {
     return items_.empty();
 }

@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 #include "lands/LandGameMatch.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 #include <vector>
@@ -22,6 +23,27 @@ std::optional<uint32_t> find_in_hand(const LandGameMatch& match, int player_inde
     return std::nullopt;
 }
 
+size_t count_in_hand(const LandGameMatch& match, int player_index, LandType land_type) {
+    size_t count = 0;
+    for (const Card& card : match.hand(player_index)) {
+        if (card.get_land_type() == land_type) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+// first card in the player's hand that is not of `land_type`
+uint32_t first_card_not_of_type(const LandGameMatch& match, int player_index, LandType land_type) {
+    for (const Card& card : match.hand(player_index)) {
+        if (card.get_land_type() != land_type) {
+            return card.get_identifier();
+        }
+    }
+    ADD_FAILURE() << "hand holds only that land type";
+    return 0;
+}
+
 // first card in the player's hand that is not `excluded` (used as a pitch cost)
 uint32_t first_card_other_than(const LandGameMatch& match, int player_index, uint32_t excluded) {
     for (const Card& card : match.hand(player_index)) {
@@ -33,20 +55,45 @@ uint32_t first_card_other_than(const LandGameMatch& match, int player_index, uin
     return excluded;
 }
 
-// deterministic: the first seed whose starting hand for `player_index` holds every land type listed
-LandGameMatch make_match_with(int player_index, const std::vector<LandType>& land_types) {
+// deterministic: the first seed whose fresh match satisfies `matches`
+template <typename Predicate>
+LandGameMatch make_match_where(Predicate matches) {
     for (uint64_t seed = 1; seed < 10000; ++seed) {
         LandGameMatch match(seed);
-        bool has_all = true;
-        for (LandType land_type : land_types) {
-            has_all = has_all && find_in_hand(match, player_index, land_type).has_value();
-        }
-        if (has_all) {
+        if (matches(match)) {
             return match;
         }
     }
-    ADD_FAILURE() << "no seed found with the requested starting hand";
+    ADD_FAILURE() << "no seed found with the requested starting hands";
     return LandGameMatch(0);
+}
+
+// P1 can counter (holds an Island), P0 cannot: P0's actions open a window for P1 only
+LandGameMatch make_match_where_only_p1_can_counter() {
+    return make_match_where([](const LandGameMatch& match) {
+        return count_in_hand(match, 1, LandType::ISLAND) == 1 &&
+               count_in_hand(match, 0, LandType::ISLAND) == 0;
+    });
+}
+
+// A match where `player_index` holds every listed land type and the opponent holds
+// no Island, so no priority window opens and every action resolves immediately.
+LandGameMatch make_match_with(int player_index, const std::vector<LandType>& land_types) {
+    return make_match_where([&](const LandGameMatch& match) {
+        for (LandType land_type : land_types) {
+            if (!find_in_hand(match, player_index, land_type).has_value()) {
+                return false;
+            }
+        }
+        return !find_in_hand(match, 1 - player_index, LandType::ISLAND).has_value();
+    });
+}
+
+// resolve a window left open by the previous action, if any
+void settle(LandGameMatch& match) {
+    if (match.priority_player() != -1) {
+        EXPECT_TRUE(match.pass_priority(match.priority_player()));
+    }
 }
 
 size_t total_lands(const LandGameMatch& match, int player_index) {
@@ -109,6 +156,7 @@ TEST(LandGameMatch, PlayLand) {
     LandGameMatch match3(12345);
 
     EXPECT_TRUE(match3.play_land(0, first_card_id(match3, 0)));
+    settle(match3);
     EXPECT_TRUE(match3.played_land_this_turn());
     EXPECT_FALSE(match3.play_land(0, first_card_id(match3, 0)));  // second play same turn
     
@@ -116,6 +164,7 @@ TEST(LandGameMatch, PlayLand) {
     EXPECT_TRUE(match3.end_turn(0));
     EXPECT_FALSE(match3.played_land_this_turn());
     EXPECT_TRUE(match3.play_land(1, first_card_id(match3, 1)));   // opponent can play
+    settle(match3);
     
 }
 
@@ -125,6 +174,7 @@ TEST(LandGameMatch, PlayLandMovesExactlyOneCardToBoard) {
     const Card played = match.hand(0).front();
 
     EXPECT_TRUE(match.play_land(0, played.get_identifier()));
+    settle(match);
     EXPECT_EQ(match.hand_size(0), 4);           // 5 - 1, not 5 - 2
     EXPECT_EQ(match.hand_size(1), 6);
 
@@ -137,6 +187,7 @@ TEST(LandGameMatch, PlayLandByCardIdIgnoresHandPosition) {
 
     const Card last = match.hand(0).back();
     EXPECT_TRUE(match.play_land(0, last.get_identifier()));
+    settle(match);
     EXPECT_EQ(match.land_count(0, last.get_land_type()), 1);
     for (const Card& card : match.hand(0)) {
         EXPECT_NE(card.get_identifier(), last.get_identifier());
@@ -185,6 +236,7 @@ TEST(LandGameMatch, Stack) {
     LandGameMatch match(12345);
     EXPECT_EQ(match.stack_size(), 0);
     EXPECT_TRUE(match.play_land(0, first_card_id(match, 0)));
+    settle(match);
     EXPECT_EQ(match.stack_size(), 0);
     EXPECT_TRUE(match.end_turn(0));
     EXPECT_EQ(match.stack_size(), 0);
@@ -320,6 +372,7 @@ TEST(LandGameMatch, PitchRummageWithShortLibraryDrawsWhatRemains) {
         const size_t hand_before = match.hand_size(player);
 
         EXPECT_TRUE(match.pitch_land(player, *mountain, first_card_other_than(match, player, *mountain)));
+        settle(match);
         EXPECT_EQ(match.deck_size(), 0);
         EXPECT_EQ(match.hand_size(player), hand_before - 2 + 1);    // only 1 card was left to draw
         return;
@@ -409,12 +462,208 @@ TEST(LandGameMatch, DeployIslandWithEmptyLibraryStillEnters) {
         const size_t hand_before = match.hand_size(player);
 
         EXPECT_TRUE(match.play_land(player, *island));
+        settle(match);
         EXPECT_EQ(match.land_count(player, LandType::ISLAND), 1);
         EXPECT_EQ(match.hand_size(player), hand_before - 1);
         EXPECT_EQ(match.deck_size(), 0);
         return;
     }
     FAIL() << "no seed produced an Island in the active player's hand";
+}
+
+TEST(LandGameMatch, DeployOpensPriorityWindowWhenOpponentCanCounter) {
+    LandGameMatch match = make_match_where_only_p1_can_counter();
+    const Card deployed = match.hand(0).front();
+
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_TRUE(match.play_land(0, deployed.get_identifier()));
+    EXPECT_EQ(match.priority_player(), 1);              // the opponent of the pusher
+    EXPECT_EQ(match.stack_size(), 1);
+    EXPECT_EQ(match.stack_top().mode, PlayMode::DEPLOY);
+    EXPECT_EQ(match.stack_top().caster_id, 0);
+    EXPECT_EQ(match.stack_top().card, deployed);
+    EXPECT_EQ(total_lands(match, 0), 0);                // still on the stack, not the battlefield
+    EXPECT_EQ(match.hand_size(0), 4);
+    EXPECT_TRUE(match.played_land_this_turn());
+}
+
+TEST(LandGameMatch, DeployAutoPassesWhenOpponentHasNoIsland) {
+    LandGameMatch match = make_match_with(0, {LandType::FOREST});
+
+    EXPECT_TRUE(match.play_land(0, match.hand(0).front().get_identifier()));
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(total_lands(match, 0), 1);
+}
+
+TEST(LandGameMatch, PassPriorityResolvesPendingDeploy) {
+    LandGameMatch match = make_match_where_only_p1_can_counter();
+    const Card deployed = match.hand(0).front();
+    ASSERT_TRUE(match.play_land(0, deployed.get_identifier()));
+
+    EXPECT_TRUE(match.pass_priority(1));
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(match.land_count(0, deployed.get_land_type()), 1);
+    EXPECT_EQ(total_lands(match, 0), 1);
+    EXPECT_EQ(match.graveyard_size(), 0);
+    EXPECT_FALSE(match.pass_priority(1));               // nothing left to pass on
+}
+
+TEST(LandGameMatch, PriorityWindowBlocksOtherActions) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 1, LandType::ISLAND) == 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0 &&
+               count_in_hand(m, 0, LandType::FOREST) >= 1;
+    });
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    ASSERT_TRUE(match.play_land(0, first_card_not_of_type(match, 0, LandType::FOREST)));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_FALSE(match.play_land(0, forest));
+    EXPECT_FALSE(match.pitch_land(0, forest));
+    EXPECT_FALSE(match.end_turn(0));
+    EXPECT_FALSE(match.play_land(1, first_card_id(match, 1)));  // not P2's turn anyway
+    EXPECT_EQ(match.priority_player(), 1);
+    EXPECT_EQ(match.stack_size(), 1);
+    EXPECT_EQ(match.hand_size(0), 4);
+    EXPECT_EQ(match.graveyard_size(), 0);
+}
+
+TEST(LandGameMatch, PassPriorityRejectsWrongPlayerAndNoWindow) {
+    LandGameMatch match = make_match_where_only_p1_can_counter();
+    EXPECT_FALSE(match.pass_priority(0));               // no window open
+    EXPECT_FALSE(match.pass_priority(1));
+
+    ASSERT_TRUE(match.play_land(0, first_card_id(match, 0)));
+    EXPECT_FALSE(match.pass_priority(0));               // the pusher holds no priority
+    EXPECT_FALSE(match.pass_priority(-1));
+    EXPECT_FALSE(match.pass_priority(2));
+    EXPECT_EQ(match.priority_player(), 1);
+    EXPECT_EQ(match.stack_size(), 1);
+}
+
+TEST(LandGameMatch, CounterSendsDeployedLandToTopOfLibrary) {
+    LandGameMatch match = make_match_where_only_p1_can_counter();
+    const Card deployed = match.hand(0).front();
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    const uint32_t extra = first_card_other_than(match, 1, island);
+    ASSERT_TRUE(match.play_land(0, deployed.get_identifier()));
+
+    EXPECT_TRUE(match.cast_counter(1, island, extra, match.stack_top().stack_id));
+    EXPECT_EQ(match.priority_player(), -1);             // P0 cannot respond: auto-pass
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(total_lands(match, 0), 0);                // the land never entered
+    EXPECT_EQ(match.hand_size(0), 4);
+    EXPECT_EQ(match.hand_size(1), 4);                   // 6 - Island - extra
+    EXPECT_EQ(match.graveyard_size(), 2);               // Island + cost card; the land is not there
+    EXPECT_EQ(match.deck_size(), 40);                   // the land went back on top
+
+    // the deploy is still used up, and the countered land is the next card drawn
+    EXPECT_TRUE(match.played_land_this_turn());
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));
+    EXPECT_TRUE(match.end_turn(0));
+    EXPECT_TRUE(match.end_turn(1));                     // P0 draws: Memory Lapse
+    EXPECT_NE(std::find(match.hand(0).begin(), match.hand(0).end(), deployed), match.hand(0).end());
+}
+
+TEST(LandGameMatch, CounterFizzlesPitchEffect) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 1, LandType::ISLAND) == 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0 &&
+               count_in_hand(m, 0, LandType::MOUNTAIN) >= 1;
+    });
+    const uint32_t mountain = *find_in_hand(match, 0, LandType::MOUNTAIN);
+    const uint32_t discard = first_card_other_than(match, 0, mountain);
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    ASSERT_TRUE(match.pitch_land(0, mountain, discard));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_TRUE(match.cast_counter(1, island, first_card_other_than(match, 1, island),
+                                   match.stack_top().stack_id));
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(match.hand_size(0), 3);                   // 5 - 2, Rummage never drew
+    EXPECT_EQ(match.deck_size(), 39);
+    EXPECT_EQ(match.graveyard_size(), 4);               // Mountain, discard, Island, cost card
+    EXPECT_TRUE(match.pitched_this_turn());             // the pitch is used up
+}
+
+TEST(LandGameMatch, CounteredRampGrantsNoExtraDeploy) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 1, LandType::ISLAND) == 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0 &&
+               count_in_hand(m, 0, LandType::FOREST) >= 1;
+    });
+    const uint32_t forest = *find_in_hand(match, 0, LandType::FOREST);
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    ASSERT_TRUE(match.pitch_land(0, forest));
+    ASSERT_TRUE(match.cast_counter(1, island, first_card_other_than(match, 1, island),
+                                   match.stack_top().stack_id));
+
+    EXPECT_TRUE(match.play_land(0, first_card_id(match, 0)));
+    EXPECT_FALSE(match.play_land(0, first_card_id(match, 0)));  // no ramp was granted
+    EXPECT_EQ(total_lands(match, 0), 1);
+}
+
+TEST(LandGameMatch, CounterWarResolvesLifo) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 0, LandType::ISLAND) == 1 &&
+               count_in_hand(m, 1, LandType::ISLAND) == 1;
+    });
+    const uint32_t island0 = *find_in_hand(match, 0, LandType::ISLAND);
+    const uint32_t island1 = *find_in_hand(match, 1, LandType::ISLAND);
+    const Card deployed = match.hand(0)[0].get_land_type() == LandType::ISLAND
+                              ? match.hand(0)[1] : match.hand(0)[0];
+    ASSERT_TRUE(match.play_land(0, deployed.get_identifier()));
+    ASSERT_EQ(match.priority_player(), 1);
+
+    // P2 counters the land, P1 counters the counter, P2 has no Island left to answer
+    const uint32_t land_id = match.stack_top().stack_id;
+    ASSERT_TRUE(match.cast_counter(1, island1, first_card_other_than(match, 1, island1), land_id));
+    ASSERT_EQ(match.priority_player(), 0);
+    EXPECT_EQ(match.stack_size(), 2);
+    ASSERT_TRUE(match.cast_counter(0, island0, first_card_other_than(match, 0, island0),
+                                   match.stack_top().stack_id));
+
+    EXPECT_EQ(match.priority_player(), -1);
+    EXPECT_EQ(match.stack_size(), 0);
+    EXPECT_EQ(match.land_count(0, deployed.get_land_type()), 1);    // Counter 1 was countered
+    EXPECT_EQ(match.deck_size(), 39);                               // nothing went back on top
+    EXPECT_EQ(match.graveyard_size(), 4);                           // two Islands + two cost cards
+    EXPECT_EQ(match.hand_size(0), 2);                               // 5 - land - Island - cost
+    EXPECT_EQ(match.hand_size(1), 4);                               // 6 - Island - cost
+}
+
+TEST(LandGameMatch, CounterRejectionsLeaveStateUntouched) {
+    LandGameMatch match = make_match_where([](const LandGameMatch& m) {
+        return count_in_hand(m, 1, LandType::ISLAND) == 1 &&
+               count_in_hand(m, 1, LandType::FOREST) >= 1 &&
+               count_in_hand(m, 0, LandType::ISLAND) == 0;
+    });
+    const uint32_t island = *find_in_hand(match, 1, LandType::ISLAND);
+    const uint32_t forest = *find_in_hand(match, 1, LandType::FOREST);
+    const uint32_t extra = first_card_other_than(match, 1, island);
+
+    // no window open yet
+    EXPECT_FALSE(match.cast_counter(1, island, extra, 1));
+
+    ASSERT_TRUE(match.play_land(0, first_card_id(match, 0)));
+    const uint32_t target = match.stack_top().stack_id;
+
+    EXPECT_FALSE(match.cast_counter(0, island, extra, target));         // P1 holds priority, not P0
+    EXPECT_FALSE(match.cast_counter(-1, island, extra, target));
+    EXPECT_FALSE(match.cast_counter(2, island, extra, target));
+    EXPECT_FALSE(match.cast_counter(1, forest, extra, target));         // not an Island
+    EXPECT_FALSE(match.cast_counter(1, 9999, extra, target));           // no such card
+    EXPECT_FALSE(match.cast_counter(1, island, island, target));        // cannot pay with itself
+    EXPECT_FALSE(match.cast_counter(1, island, 9999, target));          // cost card missing
+    EXPECT_FALSE(match.cast_counter(1, island, first_card_id(match, 0), target));   // opponent's card
+    EXPECT_FALSE(match.cast_counter(1, island, extra, 9999));           // target not on the stack
+
+    EXPECT_EQ(match.priority_player(), 1);
+    EXPECT_EQ(match.stack_size(), 1);
+    EXPECT_EQ(match.hand_size(1), 6);
+    EXPECT_EQ(match.graveyard_size(), 0);
 }
 
 } // namespace lands
