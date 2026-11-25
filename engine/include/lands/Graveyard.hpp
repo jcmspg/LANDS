@@ -13,7 +13,7 @@ class Graveyard {
         void add(Card card);
         size_t size() const;
         const std::vector<Card>& cards() const;
-        Card take_card(size_t index);   // Forest later, returns Card from vector
+        Card take_card(uint32_t card_id);   // Forest later; throws if the card is not in the graveyard
 
     private:
         std::vector<Card> cards_;

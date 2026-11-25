@@ -1,5 +1,6 @@
 #include "lands/Deck.hpp"
 #include <algorithm>
+#include <numeric>
 #include <random>
 #include <stdexcept>
 
@@ -22,6 +23,15 @@ size_t Deck::deck_size() const {
 void Deck::shuffle(uint64_t seed) {
     std::mt19937_64 rng(seed);
     std::shuffle(cards_.begin(), cards_.end(), rng);
+
+    // Reassign instance ids at shuffle time (GDD §6.3): ids are a random
+    // permutation, so an id never reveals a card's land type or library position.
+    std::vector<uint32_t> ids(cards_.size());
+    std::iota(ids.begin(), ids.end(), 0);
+    std::shuffle(ids.begin(), ids.end(), rng);
+    for (size_t i = 0; i < cards_.size(); ++i) {
+        cards_[i] = Card(cards_[i].get_land_type(), ids[i]);
+    }
 }
 
 void Deck::put_on_top(const Card& card) {

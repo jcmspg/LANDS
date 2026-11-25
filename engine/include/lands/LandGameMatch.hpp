@@ -12,7 +12,7 @@ class LandGameMatch {
     public:
         explicit LandGameMatch(uint64_t seed);   // shuffle + deal
 
-        bool play_land(int player_index, size_t hand_index);
+        bool play_land(int player_index, uint32_t card_id);
 
         WinCondition winner() const; // none until someone wins
 
@@ -20,6 +20,7 @@ class LandGameMatch {
         size_t deck_size() const;
         size_t hand_size(int player_index) const;
         size_t land_count(int player_index, LandType land_type) const;
+        const std::vector<Card>& hand(int player_index) const;
 
 
         bool end_turn(int player_index);

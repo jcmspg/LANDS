@@ -51,20 +51,25 @@ size_t LandGameMatch::land_count(int player_index, LandType land_type) const {
     return players_[player_index].land_counts()[static_cast<size_t>(land_type)];
 }
 
-bool LandGameMatch::play_land(int player_index, size_t hand_index) {
+const std::vector<Card>& LandGameMatch::hand(int player_index) const {
+    require_player_index(player_index);
+    return players_[player_index].hand();
+}
+
+bool LandGameMatch::play_land(int player_index, uint32_t card_id) {
     if (player_index < 0 || player_index >= 2) {
         return false;
     }
     if (player_index != active_player_) {
         return false;
     }
-    if (hand_index >= players_[player_index].hand_size()) {
+    if (!players_[player_index].has_card(card_id)) {
         return false;
     }
     if (played_land_this_turn()) {
         return false;
     }
-    Card card = players_[player_index].take_from_hand(hand_index);
+    Card card = players_[player_index].take_from_hand(card_id);
 
     const LandDefinition& def = get(card.get_land_type());
 

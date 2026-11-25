@@ -16,6 +16,7 @@ Rules for anything under `engine/`. They were inferred from the existing code, s
 - Types `PascalCase` (`LandGameMatch`); methods and locals `snake_case` (`play_land`); data members end with `_` (`played_land_`); enumerators `UPPER_CASE` (`PitchTiming` is the one legacy exception and uses PascalCase; don't copy it).
 - Classes: access specifiers indented one level (`    public:`), members indented two. Structs: plain members at one level.
 - Plain value types are copied, not shared (`Card`, `StackItem`).
+- **Cards are referenced by instance ID (`Card::get_identifier()`), never by hand/graveyard index** — in match actions, zone operations, and tests. Indices are fine only inside a single function while iterating.
 - File-local helpers go in an anonymous namespace in the `.cpp` (see `require_player_index`).
 - Short comments, only where the intent isn't obvious. Comment game rules with a GDD section number, e.g. `// GDD §3.5`.
 - Use `static_cast`, never C-style casts.
@@ -43,7 +44,7 @@ Rules of thumb:
   - `EXPECT_EQ` for state; check the **whole** state a change should touch (hand, board, graveyard, deck, stack), not just one counter.
 - Every new rule gets: the happy path, each rejection path, and each GDD edge case from §3.5 that applies.
 - A bug fix gets a regression test that **fails on the old code**. Confirm it by running it against the unfixed source before committing.
-- Determinism: matches are built from a fixed seed (`LandGameMatch match(12345);`). If a test needs a specific card in hand, search seeds or hands with a small helper in the test file rather than making the engine expose its internals. Don't use `rand()`, wall-clock time, or sleeps.
+- Determinism: matches are built from a fixed seed (`LandGameMatch match(12345);`). To act on a card, read its id from `match.hand(player)`. If a test needs a specific land type in hand, search the hand (or try other seeds) with a small helper in the test file rather than making the engine expose more internals. Don't use `rand()`, wall-clock time, or sleeps.
 - Test small helpers go in an anonymous namespace at the top of the test file.
 - Keep tests independent; no shared mutable state between `TEST`s.
 

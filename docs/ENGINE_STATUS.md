@@ -6,7 +6,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 
 | Area | State | GDD |
 | :--- | :--- | :--- |
-| Shared 50-card deck, seeded shuffle | done | §3.1 |
+| Shared 50-card deck, seeded shuffle, random opaque instance ids | done | §3.1, §6.3 |
 | Deal 5 / 6, P1 skips turn-1 draw | done | §3.1, §3.2 |
 | Turn bookkeeping, one deploy per turn | done | §3.2 |
 | Deploy through the stack, auto-resolve | done (no priority window) | §4.2 |
@@ -22,13 +22,12 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 
 ## Known deviations from the GDD (intentional, temporary)
 
-- **Hand indices** are used in action APIs (`play_land(player, hand_index)`). The GDD (§6.3) bans them in favor of stable `instance_id`s. See the open decision below.
 - `ActionStack` is a bare LIFO; the fixed stack grammar (§4.1) is not enforced.
 - `LandGameMatch::resolve_top_action` resolves immediately after every push.
 
-## Open decisions
+## Decisions
 
-1. **Hand indices vs. instance IDs** in the match API. Not yet decided. Until it is, new actions follow the existing hand-index style, and the choice is revisited **before** the priority window lands, because Counter/Save target stack items and cards by identity.
+1. **Cards are addressed by instance ID, never by hand index** (GDD §6.3). Decided before the priority window, because discards mid-flight shift indices. `Deck::shuffle` assigns each card a random opaque id (a permutation of 0..49) so ids never reveal land type or library position. `play_land`, `PlayerState::take_from_hand`, and `Graveyard::take_card` take ids. Unknown ids are an illegal move (`false`) at the match level and a contract violation (throws) at the container level.
 
 ## Roadmap (one slice = one reviewable commit series)
 

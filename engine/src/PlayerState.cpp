@@ -1,5 +1,6 @@
 #include "lands/PlayerState.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace lands {
@@ -10,12 +11,11 @@ void PlayerState::draw_from(Deck& deck) {
     hand_.push_back(deck.draw());
 }
 
-bool PlayerState::play_land(size_t hand_index) {
-    if (hand_index >= hand_.size()) {
+bool PlayerState::play_land(uint32_t card_id) {
+    if (!has_card(card_id)) {
         return false;
     }
-    Card card = hand_[hand_index];
-    hand_.erase(hand_.begin() + hand_index);
+    Card card = take_from_hand(card_id);
     land_counts_[static_cast<size_t>(card.get_land_type())]++;
     return true;
 }
@@ -32,12 +32,21 @@ const std::array<uint8_t, 5>& PlayerState::land_counts() const {
     return land_counts_;
 }
 
-Card PlayerState::take_from_hand(size_t hand_index) {
-    if (hand_index >= hand_.size()) {
-        throw std::out_of_range("PlayerState: hand index out of range");
+bool PlayerState::has_card(uint32_t card_id) const {
+    return std::any_of(hand_.begin(), hand_.end(), [card_id](const Card& card) {
+        return card.get_identifier() == card_id;
+    });
+}
+
+Card PlayerState::take_from_hand(uint32_t card_id) {
+    const auto it = std::find_if(hand_.begin(), hand_.end(), [card_id](const Card& card) {
+        return card.get_identifier() == card_id;
+    });
+    if (it == hand_.end()) {
+        throw std::out_of_range("PlayerState: card not in hand");
     }
-    Card card = hand_.at(hand_index);
-    hand_.erase(hand_.begin() + static_cast<std::ptrdiff_t>(hand_index));
+    Card card = *it;
+    hand_.erase(it);
     return card;
 }
 
