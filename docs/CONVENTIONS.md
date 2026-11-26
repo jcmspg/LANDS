@@ -6,6 +6,7 @@ Rules for anything under `engine/`. They were inferred from the existing code, s
 
 - Public headers: `engine/include/lands/<Name>.hpp`. Implementations: `engine/src/<Name>.cpp`. Tests: `engine/tests/test_<Name>.cpp`.
 - Everything, including tests, lives in `namespace lands`. Close with `} // namespace lands`.
+- Other code lives beside the library: `engine/sim/` holds the `lands_sim` harness (an executable, not part of the library); `engine/tests/test_MatchProperties.cpp` holds cross-cutting property tests.
 - A new module adds `src/<Name>.cpp` to the `lands` library and a `test_<Name>` executable in `engine/CMakeLists.txt`: `add_executable`, `target_link_libraries(... lands GTest::gtest GTest::gtest_main)`, and `gtest_discover_tests`. Follow the existing grouping in that file.
 
 ## Code style

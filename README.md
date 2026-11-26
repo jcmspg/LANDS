@@ -13,8 +13,9 @@ This repository is a learning project: a bit-by-bit build of a rules engine, net
 | Area | State |
 | :--- | :--- |
 | **Game design** | Finalized ruleset in the GDD (v2.1.0) |
-| **Phase 1 — C++ rules engine** | **Nearly done** — full ruleset, action log / replay and a bot simulation harness under `engine/`; what is left is smarter bots to make the balance numbers meaningful (see `docs/ENGINE_STATUS.md`) |
-| **Phases 2–5** (server, Godot client, auth, deploy) | Planned — not started |
+| **Phase 1 — C++ rules engine** | **Functionally complete** — full ruleset, action log / replay, a bot simulation harness and 179 tests under `engine/`; an independent audit against the GDD is in progress (see `docs/ENGINE_STATUS.md`) |
+| **Next step — Godot demo** | Planned: pair the engine with a playable Godot 4 demonstration of the mechanics, using a Godot MCP server to drive the editor |
+| **Phases 2–5** (server, full Godot client, auth, deploy) | Planned — not started |
 
 ### What’s implemented now (`engine/`)
 
@@ -48,10 +49,10 @@ Matches are bounded (mandatory deploys, deck-out play, hard turn cap). Full card
 
 | Layer | Choice | Status |
 | :--- | :--- | :--- |
-| Rules engine | C++20, CMake, GoogleTest | Phase 1 (in progress) |
+| Rules engine | C++20, CMake, GoogleTest | Phase 1 (functionally complete) |
 | Game server | Authoritative C++ headless process | Planned |
 | Transport | JSON over WebSockets | Planned |
-| Client | Godot 4 (desktop + WebAssembly) | Planned |
+| Client | Godot 4 (desktop + WebAssembly) | Planned; a demo comes first |
 | Persistence | SQLite (accounts, ELO, rewards) | Planned |
 | Deploy | Docker + reverse proxy (TLS) on Hetzner | Planned |
 
@@ -66,6 +67,7 @@ The long-term split is strict: **C++ owns all game state**; the Godot client ren
 ├── GameDesignDocument.md   # Full rules & architecture (source of truth)
 ├── README.md
 ├── CLAUDE.md               # Guidance for Claude Code working in this repo
+├── AGENTS.md               # Environment notes for other agents (Cursor Cloud)
 ├── docs/                   # CONVENTIONS.md (style, tests), ENGINE_STATUS.md (status & roadmap)
 └── engine/                 # Phase 1 C++ rules engine
     ├── CMakeLists.txt
@@ -75,7 +77,7 @@ The long-term split is strict: **C++ owns all game state**; the Godot client ren
     └── sim/                # lands_sim: the bot simulation harness
 ```
 
-Client, server gateway, and deploy configs will land in later phases.
+The Godot demo, the server gateway and deploy configs will land in later steps.
 
 ---
 
@@ -99,7 +101,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Individual test binaries (e.g. `test_Deck`, `test_WinEvaluator`, `test_PlayerState`, `test_LandGameMatch`) are also produced under the build directory.
+Individual test binaries (e.g. `test_Deck`, `test_WinEvaluator`, `test_PlayerState`, `test_LandGameMatch`, `test_MatchProperties`) are also produced under the build directory. The simulation harness is `./engine/build/lands_sim --matches 10000`, and an opt-in ASan + UBSan build is `cmake -S engine -B engine/build-san -DLANDS_SANITIZE=ON`.
 
 ---
 
@@ -107,7 +109,8 @@ Individual test binaries (e.g. `test_Deck`, `test_WinEvaluator`, `test_PlayerSta
 
 Each phase is meant to be tested and “frozen” before the next (see GDD §10 for detail).
 
-1. **Bare-metal C++ engine** — deterministic `LandGameMatch`, stack/priority, win eval, seeded replay, bot stress tests  
+1. **Bare-metal C++ engine** — deterministic `LandGameMatch`, stack/priority, win eval, seeded replay, bot stress tests *(functionally complete)*  
+   **Godot demo** *(next, not a GDD phase)* — a playable demonstration of the mechanics on top of the engine, built with a Godot MCP server in the loop  
 2. **WebSocket & protocol** — JSON intents/snapshots, rooms, sessions, resync  
 3. **Godot 4 client** — board UI, deploy/pitch interactions, Tweened state  
 4. **Lobby, matchmaker & SQLite** — auth, queue, ELO / coin rewards  
