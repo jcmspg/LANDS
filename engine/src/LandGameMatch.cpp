@@ -135,7 +135,8 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id,
     if (action_blocked()) {     // a window or choice is pending: answer it first
         return false;
     }
-    if (!players_[player_index].has_card(card_id)) {
+    const Card* deployed = find_card(players_[player_index].hand(), card_id);
+    if (deployed == nullptr) {
         return false;
     }
     // a second deploy is only legal if a Ramp pitch resolved this turn
@@ -143,8 +144,7 @@ bool LandGameMatch::play_land(int player_index, uint32_t card_id,
         return false;
     }
     const bool ramped = played_land_this_turn();
-    const LandDefinition& def =
-        get(find_card(players_[player_index].hand(), card_id)->get_land_type());
+    const LandDefinition& def = get(deployed->get_land_type());
     const AbilityId ability = ramped ? AbilityId::NONE : def.deploy_ability;  // ramped deploys enter vanilla
     if (!valid_deploy_target(player_index, ability, target_card_id)) {
         return false;
