@@ -9,6 +9,7 @@
 #include "lands/Choice.hpp"
 #include "lands/GameEnd.hpp"
 #include "lands/MatchConfig.hpp"
+#include "lands/Snapshot.hpp"
 
 #include <optional>
 #include <random>
@@ -85,7 +86,12 @@ class LandGameMatch {
         // One hash over everything observable: zones (library order included), board counts,
         // turn bookkeeping, strikes and the result. Equal digests mean identical matches, which
         // is how the replay guarantee is checked cheaply.
-        uint64_t state_digest() const;            // the active player still owes their mandatory deploy
+        uint64_t state_digest() const;
+
+        // What `viewer_index` is allowed to see (GDD §8.7): their own hand, everyone's board,
+        // stack and graveyard, the opponent's hand only as a count, and a pending choice's
+        // options only if the viewer is the one choosing.
+        Snapshot snapshot_for(int viewer_index) const;            // the active player still owes their mandatory deploy
 
         bool game_over() const;
         int winner_player() const;          // -1 while running and after a true draw
@@ -155,6 +161,8 @@ class LandGameMatch {
         std::vector<Action> choice_actions(int player_index) const;
         std::vector<Action> priority_actions(int player_index) const;
         std::vector<Action> main_phase_actions(int player_index) const;
+
+        std::optional<Card> known_top_;     // set by Memory Lapse; public while it stays on top
 
         std::vector<Action> action_log_;
         int log_paused_{0};         // >0 while a timer event replays its own random action

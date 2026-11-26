@@ -13,7 +13,7 @@ This repository is a learning project: a bit-by-bit build of a rules engine, net
 | Area | State |
 | :--- | :--- |
 | **Game design** | Finalized ruleset in the GDD (v2.1.0) |
-| **Phase 1 — C++ rules engine** | **Functionally complete** — full ruleset, action log / replay, a bot simulation harness and 180 tests under `engine/`; an independent audit against the GDD found no outcome-changing discrepancy (see `docs/ENGINE_STATUS.md`) |
+| **Phase 1 — C++ rules engine** | **Functionally complete** — full ruleset, action log / replay, a bot simulation harness and 193 tests under `engine/`; an independent audit against the GDD found no outcome-changing discrepancy (see `docs/ENGINE_STATUS.md`) |
 | **Next step — Godot demo** | Planned: pair the engine with a playable Godot 4 demonstration of the mechanics, using a Godot MCP server to drive the editor |
 | **Phases 2–5** (server, full Godot client, auth, deploy) | Planned — not started |
 

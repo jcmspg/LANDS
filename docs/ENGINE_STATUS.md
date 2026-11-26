@@ -2,7 +2,7 @@
 
 Living tracker of how far `engine/` is from what `GameDesignDocument.md` describes. The GDD is the source of truth for rules; this file records only **what is built**, **what is deliberately different**, **what was decided**, and **what comes next**. Update it in the same commit that changes the status.
 
-**Summary:** the Phase 1 ruleset is complete and verified (180 tests, clean under ASan + UBSan, 30,000 simulated matches replay bit-for-bit). The independent close-out audit found no rule discrepancy that changes a game outcome (see Audit below). Open items: smarter bots, and the next step, a Godot demo (see Roadmap).
+**Summary:** the Phase 1 ruleset is complete and verified (193 tests, clean under ASan + UBSan, 30,000 simulated matches replay bit-for-bit). The independent close-out audit found no rule discrepancy that changes a game outcome (see Audit below). Open items: smarter bots, and the next step, a Godot demo (see Roadmap), which has started with the masked snapshot.
 
 ## Implemented
 
@@ -16,6 +16,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | Stacked-deck constructors (`Deck(vector<Card>)`, `LandGameMatch(Deck)`) for tests, replays and experiments                            | done  | §10        |
 | `Action` type, `apply`, append-only `action_log()`, `replay(seed, log)`; rejected actions are never logged                            | done  | §6.3       |
 | `state_digest()`: one hash of the full observable state, so replay equality is a single compare                                       | done  | §6.3       |
+| `snapshot_for(viewer)`: the GDD §8.7 masked view. Own hand, both boards, the stack with targets, the graveyard, library count, `deploys_remaining`, `main_pitch_used`, strikes, the result and (for deploy-lock / turn-cap endings) the tiebreak scores; the opponent's hand only as a count; a pending choice's options only for the chooser; a Memory-Lapsed land on top is public while it stays on top | done | §3.5, §8.7, §8.10 |
 | Match-owned seeded RNG for timer-event picks, so they replay exactly                                                                  | done  | §6.3       |
 
 ### Rules
@@ -57,7 +58,7 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 A fresh reader walked GDD §3, §4, §6.3 and §8 against the code and ran a 20,000-game fuzz (default and sixth-card-only configs, ~3% timer events) checking: one player to act at a time, every listed action accepted, 50 cards conserved, no exceptions, termination. **0 violations; no rule discrepancy that changes a game outcome.** What it did report:
 
 - **No `DRAW` end reason (§8.10).** A tied tiebreak ends with `TURN_CAP` or `DEPLOY_LOCK` and `winner_player() == -1` (`is_draw()`); the protocol layer maps that to `DRAW`. Intentional, documented in `GameEnd.hpp`.
-- **Tiebreak scores are not exposed (§8.10).** `GAME_OVER` reports the scoring; the engine only returns the winner. A server can recompute distinct types and totals from `land_count`, but the demo's end screen and snapshot builder (roadmap 15) should get a small accessor. *To do with step 15.*
+- **Tiebreak scores were not exposed (§8.10).** Fixed: `Snapshot::tiebreak` carries distinct types and total lands per player for deploy-lock and turn-cap endings.
 - **Pitched cards reach the graveyard at resolution, not at push (§3.4).** Cost cards (Rummage discard, Counter's extra card) go there immediately. This only changes `graveyard_size()` and graveyard order while a window is open; nothing in the rules can read the graveyard mid-stack. Left as is; the demo should show a pitched card on the stack, not in the graveyard, until it resolves.
 - **A lone Island does not open a window (§4.3).** The counter would be unpayable, so the engine auto-passes (see the assumptions below). Rules-correct; it slightly changes the GDD's timing-leak reasoning (no window now means "no Island, or an Island with no partner card").
 - **Pitching the last card before the deploy is allowed (§3.2)** and loses by deploy lock (`PitchingTheLastCardLocksTheDeploy`). The GDD does not say; kept as is.
@@ -94,7 +95,7 @@ A fresh reader walked GDD §3, §4, §6.3 and §8 against the code and ran a 20,
    - **B. A small local host process** speaking the GDD's JSON intents / masked snapshots (§8) over a WebSocket, with Godot's built-in `WebSocketPeer` as the client. Nothing to compile on the Godot side, matches the architecture the project is heading to, and the snapshot and intent code is reusable in Phase 2. Needs a masked-snapshot (`§8.7`) builder and JSON encoding that the engine does not have yet.
    - **C. Stdio bridge:** Godot launches a CLI and exchanges JSON lines. Simplest, but throwaway.
    - Recommendation: **B**, starting with the snapshot builder, because that work is needed for Phase 2 anyway. To be decided with the user before any code.
-2. **Which Godot MCP server to use**, and whether it is installed in this environment. Unverified: check what is available before planning around its capabilities.
+2. **Godot MCP.** A user-level server is configured (`godot`: `npx @coding-solo/godot-mcp`, stdio) and Godot 4.7.2 is installed at `/usr/bin/godot`, but the server's tools were **not loaded in the session that started step 15** (a tool search found none), so it likely needs a Claude Code restart or `/mcp` before it can drive the editor. Until then, `godot --headless` from the shell can check and run a project.
 
 ## Roadmap
 
@@ -107,8 +108,8 @@ Remaining, in the recommended order:
 15. **Godot demo: pair the engine with a playable demonstration of the mechanics.**
     - Goal: a Godot 4 scene where a human can play a match against a bot and see each mechanic work (deploy, pitch, priority window with counter and save, the choice prompts, Memory Lapse on top of the library, the shared graveyard, win and end screens).
     - Method: drive the Godot editor through an MCP server (run the project, inspect the scene tree, read errors, take screenshots) so the loop of change, run, look and fix stays closed.
-    - Engine prerequisites, whatever the embedding: tiebreak scores for the end screen (the audit's open reporting item), a per-player **masked snapshot** (own hand visible, opponent hand as a count, private peeks only to the peeker, `library_top_known` after a Memory Lapse; GDD §8.7), and a serialization of `Action` to and from JSON (§8.4-8.6).
-    - First step: resolve the open decisions above, then confirm what the MCP server can do before designing around it.
+    - Engine prerequisites, whatever the embedding: a per-player **masked snapshot** *(done: `snapshot_for`)* (own hand visible, opponent hand as a count, private peeks only to the peeker, `library_top_known` after a Memory Lapse; GDD §8.7), and a serialization of `Action` to and from JSON (§8.4-8.6).
+    - Progress: the masked snapshot is done. Next: JSON encoding of snapshots and actions (a protocol layer, outside the rules library), then the local host process and the Godot scene. The embedding choice (open decision 1) is assumed to be route B, the recommendation, unless the user says otherwise.
 16. **Phase 2 (WebSocket server)** per GDD §10, reusing the snapshot and intent code from step 15 if the demo takes route B.
 
 Order is a recommendation; reorder if a later slice unblocks something earlier.

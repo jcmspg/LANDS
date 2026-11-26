@@ -23,6 +23,7 @@ add_library(lands STATIC
     src/Deck.cpp
     src/PlayerState.cpp
     src/LandGameMatch.cpp
+    src/LandGameMatchSnapshot.cpp
     src/LandRules.cpp
     src/Graveyard.cpp
     src/ActionStack.cpp
@@ -73,6 +74,10 @@ add_executable(test_RandomBot
     tests/test_RandomBot.cpp
 )
 
+add_executable(test_Snapshot
+    tests/test_Snapshot.cpp
+)
+
 target_link_libraries(test_WinEvaluator PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
@@ -109,6 +114,10 @@ target_link_libraries(test_RandomBot PRIVATE
     lands GTest::gtest GTest::gtest_main
 )
 
+target_link_libraries(test_Snapshot PRIVATE
+    lands GTest::gtest GTest::gtest_main
+)
+
 # simulation harness (GDD Phase 1 test criterion)
 add_executable(lands_sim
     sim/simulate.cpp
@@ -125,6 +134,7 @@ gtest_discover_tests(test_Graveyard)
 gtest_discover_tests(test_ActionStack)
 gtest_discover_tests(test_MatchProperties)
 gtest_discover_tests(test_RandomBot)
+gtest_discover_tests(test_Snapshot)
 
 add_test(NAME simulation_smoke COMMAND lands_sim --matches 500)
 add_test(NAME simulation_stalling COMMAND lands_sim --matches 100 --idle-percent 85 --timer-percent 2)

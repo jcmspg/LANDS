@@ -504,6 +504,7 @@ uint64_t LandGameMatch::state_digest() const {
                            static_cast<uint64_t>(next_stack_id_)}) {
         mix(value);
     }
+    mix(known_top_.has_value() ? known_top_->get_identifier() + 1u : 0u);
     return hash;
 }
 
@@ -941,6 +942,7 @@ void LandGameMatch::resolve_top_action() {
         if (countered) {
             // Memory Lapse: the countered land goes on top of the shared library
             deck_.put_on_top(item.card);
+            known_top_ = item.card;     // face-up knowledge for both players
         } else {
             players_[item.caster_id].add_to_board(item.card);
 
