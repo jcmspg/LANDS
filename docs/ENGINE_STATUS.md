@@ -2,7 +2,7 @@
 
 Living tracker of how far `engine/` is from what `GameDesignDocument.md` describes. The GDD is the source of truth for rules; this file records only **what is built**, **what is deliberately different**, **what was decided**, and **what comes next**. Update it in the same commit that changes the status.
 
-**Summary:** the Phase 1 ruleset is complete and verified (179 tests, clean under ASan + UBSan, 30,000 simulated matches replay bit-for-bit). Open items: an independent close-out audit against the GDD (in progress), smarter bots, and the next step, a Godot demo (see Roadmap).
+**Summary:** the Phase 1 ruleset is complete and verified (180 tests, clean under ASan + UBSan, 30,000 simulated matches replay bit-for-bit). The independent close-out audit found no rule discrepancy that changes a game outcome (see Audit below). Open items: smarter bots, and the next step, a Godot demo (see Roadmap).
 
 ## Implemented
 
@@ -49,8 +49,20 @@ Living tracker of how far `engine/` is from what `GameDesignDocument.md` describ
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---- | :-- |
 | `legal_actions(player)`: exactly the set of actions the engine accepts (concede aside), checked against a brute-force oracle over random games; `deploy_due()`                                                                                                                         | done  | §10 |
 | `RandomBot` (uniform legal play, with timer and stalling profiles) and `lands_sim` (`--matches`, `--seed`, `--timer-percent`, `--idle-percent`, `--config`): checks termination and bit-for-bit replay, reports outcomes and action coverage, compares the three compensation packages | done  | §10 |
-| Property tests (`test_MatchProperties`): legal actions vs. accepted actions, termination, replay determinism with timer events                                                                                                                                                         | done  | §10 |
+| Property tests (`test_MatchProperties`): legal actions vs. accepted actions, termination, replay determinism with timer events, and card conservation (all 50 cards in exactly one zone) at every step of every random game                                                                                                                                                         | done  | §10 |
 | Opt-in sanitizer build (`-DLANDS_SANITIZE=ON`); the full suite and ~14,500 simulated matches run clean under ASan + UBSan                                                                                                                                                              | done  | §10 |
+
+## Close-out audit (independent read of the GDD against the engine)
+
+A fresh reader walked GDD §3, §4, §6.3 and §8 against the code and ran a 20,000-game fuzz (default and sixth-card-only configs, ~3% timer events) checking: one player to act at a time, every listed action accepted, 50 cards conserved, no exceptions, termination. **0 violations; no rule discrepancy that changes a game outcome.** What it did report:
+
+- **No `DRAW` end reason (§8.10).** A tied tiebreak ends with `TURN_CAP` or `DEPLOY_LOCK` and `winner_player() == -1` (`is_draw()`); the protocol layer maps that to `DRAW`. Intentional, documented in `GameEnd.hpp`.
+- **Tiebreak scores are not exposed (§8.10).** `GAME_OVER` reports the scoring; the engine only returns the winner. A server can recompute distinct types and totals from `land_count`, but the demo's end screen and snapshot builder (roadmap 15) should get a small accessor. *To do with step 15.*
+- **Pitched cards reach the graveyard at resolution, not at push (§3.4).** Cost cards (Rummage discard, Counter's extra card) go there immediately. This only changes `graveyard_size()` and graveyard order while a window is open; nothing in the rules can read the graveyard mid-stack. Left as is; the demo should show a pitched card on the stack, not in the graveyard, until it resolves.
+- **A lone Island does not open a window (§4.3).** The counter would be unpayable, so the engine auto-passes (see the assumptions below). Rules-correct; it slightly changes the GDD's timing-leak reasoning (no window now means "no Island, or an Island with no partner card").
+- **Pitching the last card before the deploy is allowed (§3.2)** and loses by deploy lock (`PitchingTheLastCardLocksTheDeploy`). The GDD does not say; kept as is.
+- **Server concerns, not engine** (as the GDD scopes them): the randomized auto-pass delay (§4.3), the 60s / 90s disconnect accounting, and filtering private payloads (`choice_options()` is private to `choice_player()`; the snapshot builder must mask it).
+- **Coverage notes:** the audit also listed rules it believed untested. Two were wrong (a countered Rummage still discarding its cost is asserted in `CounterFizzlesPitchEffect`), and one was real: a countered ramped deploy returning to the library, now covered. Still without a dedicated test, and judged not worth contorting a setup for: a Save fizzling the caster's own Flicker (needs a five-deep counter chain), and the turn cap meeting a pending window or choice (unreachable: `end_turn` is rejected while either is pending).
 
 ## Known deviations from the GDD (intentional, temporary)
 
@@ -90,12 +102,12 @@ Completed slices, in order: main-phase pitches (Ramp, Rummage); Island Draw; pri
 
 Remaining, in the recommended order:
 
-13. **Close-out audit against the GDD** _(in progress)_: an independent reader walks every rule in GDD §3-§4, §6.3 and §8 against the engine and reports discrepancies with reproductions. Findings are fixed as separate slices with regression tests.
+13. ~~**Close-out audit against the GDD.**~~ Done (see Audit above); its reporting items are folded into step 15.
 14. **Smarter bots** than uniform random, so win-rate numbers mean something. Random bots only show the engine is sound; with them the shipped "both" compensation package favors P2 (~53-55%) while either single rule is near even, which is not balance evidence yet. May be deferred behind the demo.
 15. **Godot demo: pair the engine with a playable demonstration of the mechanics.**
     - Goal: a Godot 4 scene where a human can play a match against a bot and see each mechanic work (deploy, pitch, priority window with counter and save, the choice prompts, Memory Lapse on top of the library, the shared graveyard, win and end screens).
     - Method: drive the Godot editor through an MCP server (run the project, inspect the scene tree, read errors, take screenshots) so the loop of change, run, look and fix stays closed.
-    - Engine prerequisites, whatever the embedding: a per-player **masked snapshot** (own hand visible, opponent hand as a count, private peeks only to the peeker, `library_top_known` after a Memory Lapse; GDD §8.7), and a serialization of `Action` to and from JSON (§8.4-8.6).
+    - Engine prerequisites, whatever the embedding: tiebreak scores for the end screen (the audit's open reporting item), a per-player **masked snapshot** (own hand visible, opponent hand as a count, private peeks only to the peeker, `library_top_known` after a Memory Lapse; GDD §8.7), and a serialization of `Action` to and from JSON (§8.4-8.6).
     - First step: resolve the open decisions above, then confirm what the MCP server can do before designing around it.
 16. **Phase 2 (WebSocket server)** per GDD §10, reusing the snapshot and intent code from step 15 if the demo takes route B.
 
