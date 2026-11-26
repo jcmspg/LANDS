@@ -78,12 +78,22 @@ void expect_legal_actions_are_exact(const LandGameMatch& match, int player) {
     }
 }
 
+// Every one of the 50 cards is in exactly one zone: library, graveyard, a stack item, a hand or a
+// battlefield (the cards peeked by Surveil are still in the library).
+void expect_cards_are_conserved(const LandGameMatch& match) {
+    const size_t total = match.deck_size() + match.graveyard_size() + match.stack_size() +
+                         match.hand_size(0) + match.hand_size(1) +
+                         match.battlefield(0).size() + match.battlefield(1).size();
+    EXPECT_EQ(total, Deck::deck_size_);
+}
+
 // Plays one game to the end with the shared random bot, running the brute-force oracle on every
 // `check_every`-th step. Returns how many times each action type was applied.
 std::map<ActionType, int> play_random_game(uint64_t seed, LandGameMatch& match, int check_every,
                                            int timer_percent = 0, int idle_percent = 0) {
     RandomBot bot(seed, timer_percent, idle_percent);
     for (int step = 0; step < 20000 && !match.game_over(); ++step) {
+        expect_cards_are_conserved(match);
         const bool first_can_act = !match.legal_actions(0).empty();
         const bool second_can_act = !match.legal_actions(1).empty();
         EXPECT_NE(first_can_act, second_can_act) << "exactly one player may act";
@@ -93,6 +103,7 @@ std::map<ActionType, int> play_random_game(uint64_t seed, LandGameMatch& match, 
         EXPECT_TRUE(bot.step(match));
     }
 
+    expect_cards_are_conserved(match);
     std::map<ActionType, int> applied;
     for (const Action& action : match.action_log()) {
         ++applied[action.type];

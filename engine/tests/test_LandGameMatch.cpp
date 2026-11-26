@@ -2181,4 +2181,24 @@ TEST(LandGameMatch, ReplayHonorsTheConfig) {
     }
 }
 
+TEST(LandGameMatch, CounteredRampedDeployReturnsToTheLibraryAndSpendsTheRamp) {
+    LandGameMatch match = make_stacked_match(
+        {LandType::FOREST, LandType::PLAINS, LandType::MOUNTAIN, LandType::FOREST, LandType::FOREST},
+        {LandType::ISLAND, LandType::MOUNTAIN, LandType::MOUNTAIN, LandType::MOUNTAIN, LandType::MOUNTAIN, LandType::MOUNTAIN},
+        std::vector<LandType>(10, LandType::MOUNTAIN));
+    ASSERT_TRUE(match.pitch_land(0, 0));                            // Ramp
+    ASSERT_TRUE(match.pass_priority(1));
+    ASSERT_TRUE(match.play_land(0, 1));                             // the normal deploy: a vanilla Plains
+    ASSERT_TRUE(match.pass_priority(1));
+    ASSERT_TRUE(match.play_land(0, 2));                             // the ramped deploy
+    ASSERT_EQ(match.priority_player(), 1);
+
+    EXPECT_TRUE(match.cast_counter(1, 5, 6, match.stack_top().stack_id));
+    EXPECT_EQ(match.land_count(0, LandType::MOUNTAIN), 0);          // the ramped land never entered
+    EXPECT_EQ(match.deck_size(), 11);                               // it went back on top
+    EXPECT_FALSE(match.play_land(0, 3));                            // the extra deploy is spent anyway
+    EXPECT_TRUE(match.end_turn(0));
+    EXPECT_TRUE(hand_holds(match, 1, 2));                           // the counterer draws it
+}
+
 } // namespace lands
